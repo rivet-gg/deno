@@ -26,9 +26,9 @@ import * as fsEvents from "ext:runtime/40_fs_events.js";
 import * as process from "ext:runtime/40_process.js";
 import * as signals from "ext:runtime/40_signals.js";
 import * as tty from "ext:runtime/40_tty.js";
-import * as kv from "ext:deno_kv/01_db.ts";
+// import * as kv from "ext:deno_kv/01_db.ts";
 import * as cron from "ext:deno_cron/01_cron.ts";
-import * as webgpuSurface from "ext:deno_webgpu/02_surface.js";
+// import * as webgpuSurface from "ext:deno_webgpu/02_surface.js";
 
 const denoNs = {
   Process: process.Process,
@@ -158,13 +158,13 @@ denoNsUnstableById[unstableIds.cron] = {
   cron: cron.cron,
 };
 
-denoNsUnstableById[unstableIds.kv] = {
-  openKv: kv.openKv,
-  AtomicOperation: kv.AtomicOperation,
-  Kv: kv.Kv,
-  KvU64: kv.KvU64,
-  KvListIterator: kv.KvListIterator,
-};
+// denoNsUnstableById[unstableIds.kv] = {
+//   openKv: kv.openKv,
+//   AtomicOperation: kv.AtomicOperation,
+//   Kv: kv.Kv,
+//   KvU64: kv.KvU64,
+//   KvListIterator: kv.KvListIterator,
+// };
 
 denoNsUnstableById[unstableIds.net] = {
   listenDatagram: net.createListenDatagram(
@@ -175,9 +175,9 @@ denoNsUnstableById[unstableIds.net] = {
 
 // denoNsUnstableById[unstableIds.unsafeProto] = { __proto__: null }
 
-denoNsUnstableById[unstableIds.webgpu] = {
-  UnsafeWindowSurface: webgpuSurface.UnsafeWindowSurface,
-};
+// denoNsUnstableById[unstableIds.webgpu] = {
+//   UnsafeWindowSurface: webgpuSurface.UnsafeWindowSurface,
+// };
 
 // denoNsUnstableById[unstableIds.workerOptions] = { __proto__: null }
 

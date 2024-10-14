@@ -18,7 +18,7 @@ import * as webidl from "ext:deno_webidl/00_webidl.js";
 import * as globalInterfaces from "ext:deno_web/04_global_interfaces.js";
 import * as webStorage from "ext:deno_webstorage/01_webstorage.js";
 import * as prompt from "ext:runtime/41_prompt.js";
-import { loadWebGPU } from "ext:deno_webgpu/00_init.js";
+// import { loadWebGPU } from "ext:deno_webgpu/00_init.js";
 
 class Navigator {
   constructor() {
@@ -59,16 +59,16 @@ const userAgent = memoizeLazy(() => op_bootstrap_user_agent());
 const language = memoizeLazy(() => op_bootstrap_language());
 
 ObjectDefineProperties(Navigator.prototype, {
-  gpu: {
-    __proto__: null,
-    configurable: true,
-    enumerable: true,
-    get() {
-      webidl.assertBranded(this, NavigatorPrototype);
-      const webgpu = loadWebGPU();
-      return webgpu.gpu;
-    },
-  },
+  // gpu: {
+  //   __proto__: null,
+  //   configurable: true,
+  //   enumerable: true,
+  //   get() {
+  //     webidl.assertBranded(this, NavigatorPrototype);
+  //     const webgpu = loadWebGPU();
+  //     return webgpu.gpu;
+  //   },
+  // },
   hardwareConcurrency: {
     __proto__: null,
     configurable: true,

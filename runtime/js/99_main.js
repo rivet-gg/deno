@@ -1078,4 +1078,4 @@ bootstrapWorkerRuntime(
   undefined,
   true,
 );
-nodeBootstrap({ warmup: true });
+if(nodeBootstrap) nodeBootstrap({ warmup: true });
