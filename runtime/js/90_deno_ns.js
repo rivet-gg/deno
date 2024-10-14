@@ -24,7 +24,7 @@ import * as fs from "ext:deno_fs/30_fs.js";
 import * as os from "ext:runtime/30_os.js";
 import * as fsEvents from "ext:runtime/40_fs_events.js";
 import * as process from "ext:runtime/40_process.js";
-import * as signals from "ext:runtime/40_signals.js";
+// import * as signals from "ext:runtime/40_signals.js";
 import * as tty from "ext:runtime/40_tty.js";
 // import * as kv from "ext:deno_kv/01_db.ts";
 import * as cron from "ext:deno_cron/01_cron.ts";
@@ -111,8 +111,8 @@ const denoNs = {
   utime: fs.utime,
   utimeSync: fs.utimeSync,
   kill: process.kill,
-  addSignalListener: signals.addSignalListener,
-  removeSignalListener: signals.removeSignalListener,
+  // addSignalListener: signals.addSignalListener,
+  // removeSignalListener: signals.removeSignalListener,
   refTimer: timers.refTimer,
   unrefTimer: timers.unrefTimer,
   osRelease: os.osRelease,
@@ -172,7 +172,7 @@ denoNsUnstableById[unstableIds.cron] = {
 denoNsUnstableById[unstableIds.net] = {
   listenDatagram: net.createListenDatagram(
     op_net_listen_udp,
-    op_net_listen_unixpacket,
+    op_net_listen_unixpacket
   ),
 };
 
