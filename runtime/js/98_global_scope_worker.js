@@ -16,7 +16,7 @@ import * as location from "ext:deno_web/12_location.js";
 import * as console from "ext:deno_console/01_console.js";
 import * as webidl from "ext:deno_webidl/00_webidl.js";
 import * as globalInterfaces from "ext:deno_web/04_global_interfaces.js";
-import { loadWebGPU } from "ext:deno_webgpu/00_init.js";
+// import { loadWebGPU } from "ext:deno_webgpu/00_init.js";
 
 function memoizeLazy(f) {
   let v_ = null;
@@ -57,16 +57,16 @@ class WorkerNavigator {
 const workerNavigator = webidl.createBranded(WorkerNavigator);
 
 ObjectDefineProperties(WorkerNavigator.prototype, {
-  gpu: {
-    __proto__: null,
-    configurable: true,
-    enumerable: true,
-    get() {
-      webidl.assertBranded(this, WorkerNavigatorPrototype);
-      const webgpu = loadWebGPU();
-      return webgpu.gpu;
-    },
-  },
+  // gpu: {
+  //   __proto__: null,
+  //   configurable: true,
+  //   enumerable: true,
+  //   get() {
+  //     webidl.assertBranded(this, WorkerNavigatorPrototype);
+  //     const webgpu = loadWebGPU();
+  //     return webgpu.gpu;
+  //   },
+  // },
   hardwareConcurrency: {
     __proto__: null,
     configurable: true,

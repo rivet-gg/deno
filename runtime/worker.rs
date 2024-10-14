@@ -1,7 +1,10 @@
 // Copyright 2018-2024 the Deno authors. All rights reserved. MIT license.
+// Modified by Rivet
+
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::cell::RefCell;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicI32;
 use std::sync::atomic::Ordering::Relaxed;
@@ -124,8 +127,9 @@ pub struct MainWorker {
   dispatch_load_event_fn_global: v8::Global<v8::Function>,
   dispatch_beforeunload_event_fn_global: v8::Global<v8::Function>,
   dispatch_unload_event_fn_global: v8::Global<v8::Function>,
-  dispatch_process_beforeexit_event_fn_global: v8::Global<v8::Function>,
-  dispatch_process_exit_event_fn_global: v8::Global<v8::Function>,
+  // dispatch_process_beforeexit_event_fn_global: v8::Global<v8::Function>,
+  // dispatch_process_exit_event_fn_global: v8::Global<v8::Function>,
+  exit_channel_rx: Rc<RefCell<tokio::sync::watch::Receiver<()>>>,
 }
 
 pub struct WorkerServiceOptions {
@@ -208,6 +212,7 @@ pub struct WorkerOptions {
   pub origin_storage_dir: Option<std::path::PathBuf>,
   pub stdio: Stdio,
   pub enable_stack_trace_arg_in_ops: bool,
+  pub env: HashMap<String, String>,
 }
 
 impl Default for WorkerOptions {
@@ -233,6 +238,7 @@ impl Default for WorkerOptions {
       bootstrap: Default::default(),
       stdio: Default::default(),
       enable_stack_trace_arg_in_ops: false,
+      env: Default::default(),
     }
   }
 }
@@ -309,8 +315,7 @@ impl MainWorker {
     services: WorkerServiceOptions,
     options: WorkerOptions,
   ) -> Self {
-    let (mut worker, bootstrap_options) =
-      Self::from_options(main_module, services, options);
+    let (mut worker, bootstrap_options) = Self::from_options(main_module, services, options);
     worker.bootstrap(bootstrap_options);
     worker
   }
@@ -322,12 +327,12 @@ impl MainWorker {
   ) -> (Self, BootstrapOptions) {
     deno_core::extension!(deno_permissions_worker,
       options = {
-        permissions: PermissionsContainer,
-        enable_testing_features: bool,
+      permissions: PermissionsContainer,
+      enable_testing_features: bool,
       },
       state = |state, options| {
-        state.put::<PermissionsContainer>(options.permissions);
-        state.put(ops::TestingFeaturesEnabled(options.enable_testing_features));
+      state.put::<PermissionsContainer>(options.permissions);
+      state.put(ops::TestingFeaturesEnabled(options.enable_testing_features));
       },
     );
 
@@ -345,6 +350,9 @@ impl MainWorker {
       CreateCache(Arc::new(create_cache_fn))
     });
 
+    // Exit handling
+    let (exit_channel_tx, exit_channel_rx) = tokio::sync::watch::channel(());
+
     // NOTE(bartlomieju): ordering is important here, keep it in sync with
     // `runtime/web_worker.rs` and `runtime/snapshot.rs`!
     let mut extensions = vec![
@@ -357,31 +365,25 @@ impl MainWorker {
         services.blob_store.clone(),
         options.bootstrap.location.clone(),
       ),
-      deno_webgpu::deno_webgpu::init_ops_and_esm(),
-      deno_canvas::deno_canvas::init_ops_and_esm(),
-      deno_fetch::deno_fetch::init_ops_and_esm::<PermissionsContainer>(
-        deno_fetch::Options {
-          user_agent: options.bootstrap.user_agent.clone(),
-          root_cert_store_provider: services.root_cert_store_provider.clone(),
-          unsafely_ignore_certificate_errors: options
-            .unsafely_ignore_certificate_errors
-            .clone(),
-          file_fetch_handler: Rc::new(deno_fetch::FsFetchHandler),
-          resolver: services.fetch_dns_resolver,
-          ..Default::default()
-        },
-      ),
-      deno_cache::deno_cache::init_ops_and_esm::<SqliteBackedCache>(
-        create_cache,
-      ),
+      // deno_webgpu::deno_webgpu::init_ops_and_esm(),
+      // deno_canvas::deno_canvas::init_ops_and_esm(),
+      deno_fetch::deno_fetch::init_ops_and_esm::<PermissionsContainer>(deno_fetch::Options {
+        user_agent: options.bootstrap.user_agent.clone(),
+        root_cert_store_provider: services.root_cert_store_provider.clone(),
+        unsafely_ignore_certificate_errors: options
+          .unsafely_ignore_certificate_errors
+          .clone(),
+        file_fetch_handler: Rc::new(deno_fetch::FsFetchHandler),
+        resolver: services.fetch_dns_resolver,
+        ..Default::default()
+      }),
+      deno_cache::deno_cache::init_ops_and_esm::<SqliteBackedCache>(create_cache),
       deno_websocket::deno_websocket::init_ops_and_esm::<PermissionsContainer>(
         options.bootstrap.user_agent.clone(),
         services.root_cert_store_provider.clone(),
         options.unsafely_ignore_certificate_errors.clone(),
       ),
-      deno_webstorage::deno_webstorage::init_ops_and_esm(
-        options.origin_storage_dir.clone(),
-      ),
+      deno_webstorage::deno_webstorage::init_ops_and_esm(options.origin_storage_dir.clone()),
       deno_crypto::deno_crypto::init_ops_and_esm(options.seed),
       deno_broadcast_channel::deno_broadcast_channel::init_ops_and_esm(
         services.broadcast_channel.clone(),
@@ -392,35 +394,13 @@ impl MainWorker {
         options.unsafely_ignore_certificate_errors.clone(),
       ),
       deno_tls::deno_tls::init_ops_and_esm(),
-      deno_kv::deno_kv::init_ops_and_esm(
-        MultiBackendDbHandler::remote_or_sqlite::<PermissionsContainer>(
-          options.origin_storage_dir.clone(),
-          options.seed,
-          deno_kv::remote::HttpOptions {
-            user_agent: options.bootstrap.user_agent.clone(),
-            root_cert_store_provider: services.root_cert_store_provider.clone(),
-            unsafely_ignore_certificate_errors: options
-              .unsafely_ignore_certificate_errors
-              .clone(),
-            client_cert_chain_and_key: TlsKeys::Null,
-            proxy: None,
-          },
-        ),
-        deno_kv::KvConfig::builder().build(),
-      ),
       deno_cron::deno_cron::init_ops_and_esm(LocalCronHandler::new()),
       deno_napi::deno_napi::init_ops_and_esm::<PermissionsContainer>(),
       deno_http::deno_http::init_ops_and_esm::<DefaultHttpPropertyExtractor>(
         deno_http::Options::default(),
       ),
       deno_io::deno_io::init_ops_and_esm(Some(options.stdio)),
-      deno_fs::deno_fs::init_ops_and_esm::<PermissionsContainer>(
-        services.fs.clone(),
-      ),
-      deno_node::deno_node::init_ops_and_esm::<PermissionsContainer>(
-        services.node_services,
-        services.fs,
-      ),
+      deno_fs::deno_fs::init_ops_and_esm::<PermissionsContainer>(services.fs.clone()),
       // Ops from this crate
       ops::runtime::deno_runtime::init_ops_and_esm(main_module.clone()),
       ops::worker_host::deno_worker_host::init_ops_and_esm(
@@ -428,12 +408,13 @@ impl MainWorker {
         options.format_js_error_fn.clone(),
       ),
       ops::fs_events::deno_fs_events::init_ops_and_esm(),
-      ops::os::deno_os::init_ops_and_esm(exit_code.clone()),
-      ops::permissions::deno_permissions::init_ops_and_esm(),
-      ops::process::deno_process::init_ops_and_esm(
-        services.npm_process_state_provider,
+      ops::os::deno_os_in_memory::init_ops_and_esm(
+        unsafe { std::mem::transmute(exit_code.clone()) },
+        options.env.clone(),
+        exit_channel_tx,
       ),
-      ops::signal::deno_signal::init_ops_and_esm(),
+      ops::permissions::deno_permissions::init_ops_and_esm(),
+      ops::process::deno_process::init_ops_and_esm(services.npm_process_state_provider),
       ops::tty::deno_tty::init_ops_and_esm(),
       ops::http::deno_http_runtime::init_ops_and_esm(),
       ops::bootstrap::deno_bootstrap::init_ops_and_esm(
@@ -472,14 +453,17 @@ impl MainWorker {
     extensions.extend(std::mem::take(&mut options.extensions));
 
     #[cfg(feature = "only_snapshotted_js_sources")]
-    options.startup_snapshot.as_ref().expect("A user snapshot was not provided, even though 'only_snapshotted_js_sources' is used.");
+    options.startup_snapshot.as_ref().expect(
+      "A user snapshot was not provided, even though 'only_snapshotted_js_sources' is used.",
+    );
 
     let has_notified_of_inspector_disconnect = AtomicBool::new(false);
     let wait_for_inspector_disconnect_callback = Box::new(move || {
-      if !has_notified_of_inspector_disconnect
-        .swap(true, std::sync::atomic::Ordering::SeqCst)
+      if !has_notified_of_inspector_disconnect.swap(true, std::sync::atomic::Ordering::SeqCst)
       {
-        log::info!("Program finished. Waiting for inspector to disconnect to exit the process...");
+        println!(
+          "Program finished. Waiting for inspector to disconnect to exit the process..."
+        );
       }
     });
 
@@ -492,22 +476,14 @@ impl MainWorker {
       shared_array_buffer_store: services.shared_array_buffer_store.clone(),
       compiled_wasm_module_store: services.compiled_wasm_module_store.clone(),
       extensions,
-      extension_transpiler: Some(Rc::new(|specifier, source| {
-        maybe_transpile_source(specifier, source)
-      })),
-      inspector: true,
+      extension_transpiler: Some(Rc::new(maybe_transpile_source)),
+      inspector: options.maybe_inspector_server.is_some(),
       is_main: true,
       feature_checker: Some(services.feature_checker.clone()),
       op_metrics_factory_fn,
-      wait_for_inspector_disconnect_callback: Some(
-        wait_for_inspector_disconnect_callback,
-      ),
-      import_meta_resolve_callback: Some(Box::new(
-        import_meta_resolve_callback,
-      )),
-      validate_import_attributes_cb: Some(Box::new(
-        validate_import_attributes_callback,
-      )),
+      wait_for_inspector_disconnect_callback: Some(wait_for_inspector_disconnect_callback),
+      import_meta_resolve_callback: Some(Box::new(import_meta_resolve_callback)),
+      validate_import_attributes_cb: Some(Box::new(validate_import_attributes_callback)),
       import_assertions_support: deno_core::ImportAssertionsSupport::Error,
       eval_context_code_cache_cbs: services.v8_code_cache.map(|cache| {
         let cache_clone = cache.clone();
@@ -522,10 +498,6 @@ impl MainWorker {
             };
             let data = cache
               .get_sync(specifier, CodeCacheType::Script, source_hash)
-              .inspect(|_| {
-                // This log line is also used by tests.
-                log::debug!("V8 code cache hit for script: {specifier}, [{source_hash}]");
-              })
               .map(Cow::Owned);
             Ok(SourceCodeCacheInfo {
               data,
@@ -534,8 +506,6 @@ impl MainWorker {
           }) as Box<dyn Fn(&_, &_) -> _>,
           Box::new(
             move |specifier: ModuleSpecifier, source_hash: u64, data: &[u8]| {
-              // This log line is also used by tests.
-              log::debug!("Updating V8 code cache for script: {specifier}, [{source_hash}]");
               cache_clone.set_sync(
                 specifier,
                 CodeCacheType::Script,
@@ -578,8 +548,6 @@ impl MainWorker {
       dispatch_load_event_fn_global,
       dispatch_beforeunload_event_fn_global,
       dispatch_unload_event_fn_global,
-      dispatch_process_beforeexit_event_fn_global,
-      dispatch_process_exit_event_fn_global,
     ) = {
       let context = js_runtime.main_context();
       let scope = &mut js_runtime.handle_scope();
@@ -594,86 +562,48 @@ impl MainWorker {
         .unwrap();
       let main_runtime_str =
         v8::String::new_external_onebyte_static(scope, b"mainRuntime").unwrap();
-      let bootstrap_fn =
-        bootstrap_ns.get(scope, main_runtime_str.into()).unwrap();
-      let bootstrap_fn =
-        v8::Local::<v8::Function>::try_from(bootstrap_fn).unwrap();
+      let bootstrap_fn = bootstrap_ns.get(scope, main_runtime_str.into()).unwrap();
+      let bootstrap_fn = v8::Local::<v8::Function>::try_from(bootstrap_fn).unwrap();
       let dispatch_load_event_fn_str =
-        v8::String::new_external_onebyte_static(scope, b"dispatchLoadEvent")
-          .unwrap();
+        v8::String::new_external_onebyte_static(scope, b"dispatchLoadEvent").unwrap();
       let dispatch_load_event_fn = bootstrap_ns
         .get(scope, dispatch_load_event_fn_str.into())
         .unwrap();
       let dispatch_load_event_fn =
         v8::Local::<v8::Function>::try_from(dispatch_load_event_fn).unwrap();
       let dispatch_beforeunload_event_fn_str =
-        v8::String::new_external_onebyte_static(
-          scope,
-          b"dispatchBeforeUnloadEvent",
-        )
-        .unwrap();
+        v8::String::new_external_onebyte_static(scope, b"dispatchBeforeUnloadEvent")
+          .unwrap();
       let dispatch_beforeunload_event_fn = bootstrap_ns
         .get(scope, dispatch_beforeunload_event_fn_str.into())
         .unwrap();
       let dispatch_beforeunload_event_fn =
-        v8::Local::<v8::Function>::try_from(dispatch_beforeunload_event_fn)
-          .unwrap();
+        v8::Local::<v8::Function>::try_from(dispatch_beforeunload_event_fn).unwrap();
       let dispatch_unload_event_fn_str =
-        v8::String::new_external_onebyte_static(scope, b"dispatchUnloadEvent")
-          .unwrap();
+        v8::String::new_external_onebyte_static(scope, b"dispatchUnloadEvent").unwrap();
       let dispatch_unload_event_fn = bootstrap_ns
         .get(scope, dispatch_unload_event_fn_str.into())
         .unwrap();
       let dispatch_unload_event_fn =
         v8::Local::<v8::Function>::try_from(dispatch_unload_event_fn).unwrap();
-      let dispatch_process_beforeexit_event =
-        v8::String::new_external_onebyte_static(
-          scope,
-          b"dispatchProcessBeforeExitEvent",
-        )
-        .unwrap();
-      let dispatch_process_beforeexit_event_fn = bootstrap_ns
-        .get(scope, dispatch_process_beforeexit_event.into())
-        .unwrap();
-      let dispatch_process_beforeexit_event_fn =
-        v8::Local::<v8::Function>::try_from(
-          dispatch_process_beforeexit_event_fn,
-        )
-        .unwrap();
-      let dispatch_process_exit_event =
-        v8::String::new_external_onebyte_static(
-          scope,
-          b"dispatchProcessExitEvent",
-        )
-        .unwrap();
-      let dispatch_process_exit_event_fn = bootstrap_ns
-        .get(scope, dispatch_process_exit_event.into())
-        .unwrap();
-      let dispatch_process_exit_event_fn =
-        v8::Local::<v8::Function>::try_from(dispatch_process_exit_event_fn)
-          .unwrap();
       (
         v8::Global::new(scope, bootstrap_fn),
         v8::Global::new(scope, dispatch_load_event_fn),
         v8::Global::new(scope, dispatch_beforeunload_event_fn),
         v8::Global::new(scope, dispatch_unload_event_fn),
-        v8::Global::new(scope, dispatch_process_beforeexit_event_fn),
-        v8::Global::new(scope, dispatch_process_exit_event_fn),
       )
     };
 
     let worker = Self {
       js_runtime,
       should_break_on_first_statement: options.should_break_on_first_statement,
-      should_wait_for_inspector_session: options
-        .should_wait_for_inspector_session,
+      should_wait_for_inspector_session: options.should_wait_for_inspector_session,
       exit_code,
       bootstrap_fn_global: Some(bootstrap_fn_global),
       dispatch_load_event_fn_global,
       dispatch_beforeunload_event_fn_global,
       dispatch_unload_event_fn_global,
-      dispatch_process_beforeexit_event_fn_global,
-      dispatch_process_exit_event_fn_global,
+      exit_channel_rx: Rc::new(RefCell::new(exit_channel_rx)),
     };
     (worker, options.bootstrap)
   }
@@ -684,9 +614,6 @@ impl MainWorker {
       let op_state = self.js_runtime.op_state();
       let mut state = op_state.borrow_mut();
       state.put(options.clone());
-      if let Some(node_ipc_fd) = options.node_ipc_fd {
-        state.put(deno_node::ChildPipeFd(node_ipc_fd));
-      }
     }
 
     let scope = &mut self.js_runtime.handle_scope();
@@ -728,10 +655,7 @@ impl MainWorker {
   }
 
   /// Executes specified JavaScript module.
-  pub async fn evaluate_module(
-    &mut self,
-    id: ModuleId,
-  ) -> Result<(), AnyError> {
+  pub async fn evaluate_module(&mut self, id: ModuleId) -> Result<(), AnyError> {
     self.wait_for_inspector_session();
     let mut receiver = self.js_runtime.mod_evaluate(id);
     tokio::select! {
@@ -740,27 +664,22 @@ impl MainWorker {
       biased;
 
       maybe_result = &mut receiver => {
-        debug!("received module evaluate {:#?}", maybe_result);
-        maybe_result
+      maybe_result
       }
 
       event_loop_result = self.run_event_loop(false) => {
-        event_loop_result?;
-        receiver.await
+      event_loop_result?;
+      receiver.await
       }
     }
   }
 
   /// Run the event loop up to a given duration. If the runtime resolves early, returns
   /// early. Will always poll the runtime at least once.
-  pub async fn run_up_to_duration(
-    &mut self,
-    duration: Duration,
-  ) -> Result<(), AnyError> {
+  pub async fn run_up_to_duration(&mut self, duration: Duration) -> Result<(), AnyError> {
     match tokio::time::timeout(
       duration,
-      self
-        .js_runtime
+      self.js_runtime
         .run_event_loop(PollEventLoopOptions::default()),
     )
     .await
@@ -793,8 +712,7 @@ impl MainWorker {
 
   fn wait_for_inspector_session(&mut self) {
     if self.should_break_on_first_statement {
-      self
-        .js_runtime
+      self.js_runtime
         .inspector()
         .borrow_mut()
         .wait_for_session_and_break_on_next_statement();
@@ -827,6 +745,16 @@ impl MainWorker {
       .await
   }
 
+  pub async fn run_event_loop_no_exit(&mut self) -> Option<Result<(), AnyError>> {
+    let rx = self.exit_channel_rx.clone();
+    let mut rx = rx.borrow_mut();
+
+    tokio::select! {
+      _ = rx.changed() => None,
+      res = self.run_event_loop(false) => Some(res),
+    }
+  }
+
   /// Return exit code set by the executed code (either in main worker
   /// or one of child web workers).
   pub fn exit_code(&self) -> i32 {
@@ -839,8 +767,7 @@ impl MainWorker {
   pub fn dispatch_load_event(&mut self) -> Result<(), AnyError> {
     let scope = &mut self.js_runtime.handle_scope();
     let tc_scope = &mut v8::TryCatch::new(scope);
-    let dispatch_load_event_fn =
-      v8::Local::new(tc_scope, &self.dispatch_load_event_fn_global);
+    let dispatch_load_event_fn = v8::Local::new(tc_scope, &self.dispatch_load_event_fn_global);
     let undefined = v8::undefined(tc_scope);
     dispatch_load_event_fn.call(tc_scope, undefined.into(), &[]);
     if let Some(exception) = tc_scope.exception() {
@@ -867,21 +794,6 @@ impl MainWorker {
     Ok(())
   }
 
-  /// Dispatches process.emit("exit") event for node compat.
-  pub fn dispatch_process_exit_event(&mut self) -> Result<(), AnyError> {
-    let scope = &mut self.js_runtime.handle_scope();
-    let tc_scope = &mut v8::TryCatch::new(scope);
-    let dispatch_process_exit_event_fn =
-      v8::Local::new(tc_scope, &self.dispatch_process_exit_event_fn_global);
-    let undefined = v8::undefined(tc_scope);
-    dispatch_process_exit_event_fn.call(tc_scope, undefined.into(), &[]);
-    if let Some(exception) = tc_scope.exception() {
-      let error = JsError::from_v8_exception(tc_scope, exception);
-      return Err(error.into());
-    }
-    Ok(())
-  }
-
   /// Dispatches "beforeunload" event to the JavaScript runtime. Returns a boolean
   /// indicating if the event was prevented and thus event loop should continue
   /// running.
@@ -891,37 +803,12 @@ impl MainWorker {
     let dispatch_beforeunload_event_fn =
       v8::Local::new(tc_scope, &self.dispatch_beforeunload_event_fn_global);
     let undefined = v8::undefined(tc_scope);
-    let ret_val =
-      dispatch_beforeunload_event_fn.call(tc_scope, undefined.into(), &[]);
+    let ret_val = dispatch_beforeunload_event_fn.call(tc_scope, undefined.into(), &[]);
     if let Some(exception) = tc_scope.exception() {
       let error = JsError::from_v8_exception(tc_scope, exception);
       return Err(error.into());
     }
     let ret_val = ret_val.unwrap();
     Ok(ret_val.is_false())
-  }
-
-  /// Dispatches process.emit("beforeExit") event for node compat.
-  pub fn dispatch_process_beforeexit_event(
-    &mut self,
-  ) -> Result<bool, AnyError> {
-    let scope = &mut self.js_runtime.handle_scope();
-    let tc_scope = &mut v8::TryCatch::new(scope);
-    let dispatch_process_beforeexit_event_fn = v8::Local::new(
-      tc_scope,
-      &self.dispatch_process_beforeexit_event_fn_global,
-    );
-    let undefined = v8::undefined(tc_scope);
-    let ret_val = dispatch_process_beforeexit_event_fn.call(
-      tc_scope,
-      undefined.into(),
-      &[],
-    );
-    if let Some(exception) = tc_scope.exception() {
-      let error = JsError::from_v8_exception(tc_scope, exception);
-      return Err(error.into());
-    }
-    let ret_val = ret_val.unwrap();
-    Ok(ret_val.is_true())
   }
 }
