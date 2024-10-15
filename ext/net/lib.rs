@@ -11,6 +11,7 @@ mod tcp;
 
 use deno_core::error::AnyError;
 use deno_core::OpState;
+use deno_permissions::Protocol;
 use deno_tls::rustls::RootCertStore;
 use deno_tls::RootCertStoreProvider;
 use std::borrow::Cow;
@@ -24,6 +25,12 @@ pub trait NetPermissions {
   fn check_net<T: AsRef<str>>(
     &mut self,
     host: &(T, Option<u16>),
+    api_name: &str,
+  ) -> Result<(), AnyError>;
+  fn check_net_listen<T: AsRef<str>>(
+    &mut self,
+    host: &(T, Option<u16>),
+    protocol: Protocol,
     api_name: &str,
   ) -> Result<(), AnyError>;
   #[must_use = "the resolved return value to mitigate time-of-check to time-of-use issues"]
@@ -54,6 +61,16 @@ impl NetPermissions for deno_permissions::PermissionsContainer {
     api_name: &str,
   ) -> Result<(), AnyError> {
     deno_permissions::PermissionsContainer::check_net(self, host, api_name)
+  }
+
+  #[inline(always)]
+  fn check_net_listen<T: AsRef<str>>(
+    &mut self,
+    host: &(T, Option<u16>),
+    protocol: Protocol,
+    api_name: &str,
+  ) -> Result<(), AnyError> {
+    deno_permissions::PermissionsContainer::check_net_listen(self, host, protocol, api_name)
   }
 
   #[inline(always)]
@@ -117,7 +134,8 @@ impl DefaultTlsOptions {
 /// would override previously used alias.
 pub struct UnsafelyIgnoreCertificateErrors(pub Option<Vec<String>>);
 
-deno_core::extension!(deno_net,
+deno_core::extension!(
+  deno_net,
   deps = [ deno_web ],
   parameters = [ P: NetPermissions ],
   ops = [

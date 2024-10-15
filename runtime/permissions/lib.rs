@@ -979,8 +979,14 @@ impl fmt::Display for NetDescriptor {
   }
 }
 
+#[derive(Clone, Copy, Eq, PartialEq, Hash, Debug)]
+pub enum Protocol {
+  Tcp,
+  Udp,
+}
+
 #[derive(Clone, Eq, PartialEq, Hash, Debug)]
-pub struct NetListenDescriptor(NetDescriptor);
+pub struct NetListenDescriptor(NetDescriptor, Protocol);
 
 impl QueryDescriptor for NetListenDescriptor {
   type AllowDesc = NetListenDescriptor;
@@ -995,15 +1001,15 @@ impl QueryDescriptor for NetListenDescriptor {
   }
 
   fn from_allow(allow: &Self::AllowDesc) -> Self {
-    Self(NetDescriptor::from_allow(&allow.0))
+    Self(NetDescriptor::from_allow(&allow.0), allow.1)
   }
 
   fn as_allow(&self) -> Option<Self::AllowDesc> {
-    self.0.as_allow().map(NetListenDescriptor)
+    Some(self.clone())
   }
 
   fn as_deny(&self) -> Self::DenyDesc {
-    Self(self.0.as_deny())
+    self.clone()
   }
 
   fn check_in_permission(
@@ -1016,19 +1022,19 @@ impl QueryDescriptor for NetListenDescriptor {
   }
 
   fn matches_allow(&self, other: &Self::AllowDesc) -> bool {
-    self.0.matches_allow(&other.0)
+    self.0.matches_allow(&other.0) && self.1 == other.1
   }
 
   fn matches_deny(&self, other: &Self::DenyDesc) -> bool {
-    self.0.matches_deny(&other.0)
+    self.0.matches_deny(&other.0) && self.1 == other.1
   }
 
   fn revokes(&self, other: &Self::AllowDesc) -> bool {
-    self.0.revokes(&other.0)
+    self.matches_allow(&other)
   }
 
   fn stronger_than_deny(&self, other: &Self::DenyDesc) -> bool {
-    self.0.stronger_than_deny(&other.0)
+    self.matches_deny(&other)
   }
 
   fn overlaps_deny(&self, other: &Self::DenyDesc) -> bool {
@@ -1038,15 +1044,23 @@ impl QueryDescriptor for NetListenDescriptor {
 
 impl NetListenDescriptor {
   pub fn parse(specifier: &str) -> Result<Self, AnyError> {
-    Ok(NetListenDescriptor(NetDescriptor::parse(specifier)?))
+    let protocol = if specifier.starts_with("tcp://") {
+      Protocol::Tcp
+    } else if specifier.starts_with("udp://") {
+      Protocol::Udp
+    } else {
+      return Err(uri_error(format!("invalid value '{specifier}': must start with either tcp:// or udp://")));
+    };
+
+    Ok(NetListenDescriptor(NetDescriptor::parse(&specifier[6..])?, protocol))
   }
 
-  pub fn from_url(url: &Url) -> Result<Self, AnyError> {
-    Ok(NetListenDescriptor(NetDescriptor::from_url(url)?))
+  pub fn from_url(url: &Url, protocol: Protocol) -> Result<Self, AnyError> {
+    Ok(NetListenDescriptor(NetDescriptor::from_url(url)?, protocol))
   }
 
-  pub fn from_ipv4(ip: Ipv4Addr, port: Option<u16>) -> Self {
-    NetListenDescriptor(NetDescriptor(Host::Ip(IpAddr::V4(ip)), port))
+  pub fn from_ipv4(ip: Ipv4Addr, port: Option<u16>, protocol: Protocol) -> Self {
+    NetListenDescriptor(NetDescriptor(Host::Ip(IpAddr::V4(ip)), port), protocol)
   }
 }
 
@@ -2697,27 +2711,29 @@ impl PermissionsContainer {
   pub fn check_net_listen_url(
     &mut self,
     url: &Url,
+    protocol: Protocol,
     api_name: &str,
   ) -> Result<(), AnyError> {
     let mut inner = self.inner.lock();
     if inner.net_listen.is_allow_all() {
       return Ok(());
     }
-    let desc = self.descriptor_parser.parse_net_descriptor_from_url(url)?;
-    inner.net.check(&desc, Some(api_name))
+    let desc = self.descriptor_parser.parse_net_listen_descriptor_from_url(url, protocol)?;
+    inner.net_listen.check(&desc, Some(api_name))
   }
 
   #[inline(always)]
   pub fn check_net_listen<T: AsRef<str>>(
     &mut self,
     host: &(T, Option<u16>),
+    protocol: Protocol,
     api_name: &str,
   ) -> Result<(), AnyError> {
     let mut inner = self.inner.lock();
     let inner = &mut inner.net_listen;
     skip_check_if_is_permission_fully_granted!(inner);
     let hostname = Host::parse(host.0.as_ref())?;
-    let descriptor = NetListenDescriptor(NetDescriptor(hostname, host.1));
+    let descriptor = NetListenDescriptor(NetDescriptor(hostname, host.1), protocol);
     inner.check(&descriptor, Some(api_name))
   }
 
@@ -3504,8 +3520,9 @@ pub trait PermissionDescriptorParser: Debug + Send + Sync {
   fn parse_net_listen_descriptor_from_url(
     &self,
     url: &Url,
+    protocol: Protocol,
   ) -> Result<NetListenDescriptor, AnyError> {
-    NetListenDescriptor::from_url(url)
+    NetListenDescriptor::from_url(url, protocol)
   }
 
   fn parse_import_descriptor(

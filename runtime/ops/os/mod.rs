@@ -182,9 +182,9 @@ fn op_exit(state: &mut OpState) -> Result<(), AnyError> {
   }
 
   // Yield to the runtime
-  std::thread::yield_now();
-  // std::thread::sleep(std::time::Duration::from_secs(1));
-  Ok(())
+  loop {
+    std::thread::yield_now();
+  }
 }
 
 #[op2]

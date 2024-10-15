@@ -27,6 +27,7 @@ use deno_core::OpState;
 use deno_core::RcRef;
 use deno_core::Resource;
 use deno_core::ResourceId;
+use deno_permissions::Protocol;
 use deno_tls::create_client_config;
 use deno_tls::load_certs;
 use deno_tls::load_private_keys;
@@ -455,7 +456,7 @@ where
   {
     let permissions = state.borrow_mut::<NP>();
     permissions
-      .check_net(&(&addr.hostname, Some(addr.port)), "Deno.listenTls()")?;
+      .check_net_listen(&(&addr.hostname, Some(addr.port)), Protocol::Tcp, "Deno.listenTls()")?;
   }
 
   let bind_addr = resolve_addr_sync(&addr.hostname, addr.port)?
