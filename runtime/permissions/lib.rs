@@ -979,6 +979,77 @@ impl fmt::Display for NetDescriptor {
 }
 
 #[derive(Clone, Eq, PartialEq, Hash, Debug)]
+pub struct NetListenDescriptor(NetDescriptor);
+
+impl QueryDescriptor for NetListenDescriptor {
+  type AllowDesc = NetListenDescriptor;
+  type DenyDesc = NetListenDescriptor;
+
+  fn flag_name() -> &'static str {
+    "net-listen"
+  }
+
+  fn display_name(&self) -> Cow<str> {
+    self.0.display_name()
+  }
+
+  fn from_allow(allow: &Self::AllowDesc) -> Self {
+    Self(NetDescriptor::from_allow(&allow.0))
+  }
+
+  fn as_allow(&self) -> Option<Self::AllowDesc> {
+    self.0.as_allow().map(NetListenDescriptor)
+  }
+
+  fn as_deny(&self) -> Self::DenyDesc {
+    Self(self.0.as_deny())
+  }
+
+  fn check_in_permission(
+    &self,
+    perm: &mut UnaryPermission<Self>,
+    api_name: Option<&str>,
+  ) -> Result<(), AnyError> {
+    skip_check_if_is_permission_fully_granted!(perm);
+    perm.check_desc(Some(self), false, api_name)
+  }
+
+  fn matches_allow(&self, other: &Self::AllowDesc) -> bool {
+    self.0.matches_allow(&other.0)
+  }
+
+  fn matches_deny(&self, other: &Self::DenyDesc) -> bool {
+    self.0.matches_deny(&other.0)
+  }
+
+  fn revokes(&self, other: &Self::AllowDesc) -> bool {
+    self.0.revokes(&other.0)
+  }
+
+  fn stronger_than_deny(&self, other: &Self::DenyDesc) -> bool {
+    self.0.stronger_than_deny(&other.0)
+  }
+
+  fn overlaps_deny(&self, other: &Self::DenyDesc) -> bool {
+    self.0.overlaps_deny(&other.0)
+  }
+}
+
+impl NetListenDescriptor {
+  pub fn parse(specifier: &str) -> Result<Self, AnyError> {
+    Ok(NetListenDescriptor(NetDescriptor::parse(specifier)?))
+  }
+
+  pub fn from_url(url: &Url) -> Result<Self, AnyError> {
+    Ok(NetListenDescriptor(NetDescriptor::from_url(url)?))
+  }
+
+  pub fn from_ipv4(ip: Ipv4, port: Option<u16>) -> Self {
+    Ok(NetListenDescriptor(NetDescriptor(Host::Ip(IpAddr::V4(ip)), port)))
+  }
+}
+
+#[derive(Clone, Eq, PartialEq, Hash, Debug)]
 pub struct ImportDescriptor(NetDescriptor);
 
 impl QueryDescriptor for ImportDescriptor {
@@ -1611,6 +1682,37 @@ impl UnaryPermission<NetDescriptor> {
   }
 }
 
+impl UnaryPermission<NetListenDescriptor> {
+  pub fn query(&self, host: Option<&NetListenDescriptor>) -> PermissionState {
+    self.query_desc(host, AllowPartial::TreatAsPartialGranted)
+  }
+
+  pub fn request(
+    &mut self,
+    host: Option<&NetListenDescriptor>,
+  ) -> PermissionState {
+    self.request_desc(host)
+  }
+
+  pub fn revoke(&mut self, host: Option<&NetListenDescriptor>) -> PermissionState {
+    self.revoke_desc(host)
+  }
+
+  pub fn check(
+    &mut self,
+    host: &NetListenDescriptor,
+    api_name: Option<&str>,
+  ) -> Result<(), AnyError> {
+    skip_check_if_is_permission_fully_granted!(self);
+    self.check_desc(Some(host), false, api_name)
+  }
+
+  pub fn check_all(&mut self) -> Result<(), AnyError> {
+    skip_check_if_is_permission_fully_granted!(self);
+    self.check_desc(None, false, None)
+  }
+}
+
 impl UnaryPermission<ImportDescriptor> {
   pub fn query(&self, host: Option<&ImportDescriptor>) -> PermissionState {
     self.query_desc(host, AllowPartial::TreatAsPartialGranted)
@@ -1795,6 +1897,7 @@ pub struct Permissions {
   pub read: UnaryPermission<ReadQueryDescriptor>,
   pub write: UnaryPermission<WriteQueryDescriptor>,
   pub net: UnaryPermission<NetDescriptor>,
+  pub net_listen: UnaryPermission<NetListenDescriptor>,
   pub env: UnaryPermission<EnvDescriptor>,
   pub sys: UnaryPermission<SysDescriptor>,
   pub run: UnaryPermission<RunQueryDescriptor>,
@@ -1810,6 +1913,8 @@ pub struct PermissionsOptions {
   pub deny_env: Option<Vec<String>>,
   pub allow_net: Option<Vec<String>>,
   pub deny_net: Option<Vec<String>>,
+  pub allow_net_listen: Option<Vec<String>>,
+  pub deny_net_listen: Option<Vec<String>>,
   pub allow_ffi: Option<Vec<String>>,
   pub deny_ffi: Option<Vec<String>>,
   pub allow_read: Option<Vec<String>>,
@@ -1955,6 +2060,15 @@ impl Permissions {
         })?,
         opts.prompt,
       )?,
+      net_listen: Permissions::new_unary(
+        parse_maybe_vec(opts.allow_net_listen.as_deref(), |item| {
+          parser.parse_net_listen_descriptor(item)
+        })?,
+        parse_maybe_vec(opts.deny_net_listen.as_deref(), |item| {
+          parser.parse_net_listen_descriptor(item)
+        })?,
+        opts.prompt,
+      )?,
       env: Permissions::new_unary(
         parse_maybe_vec(opts.allow_env.as_deref(), |item| {
           parser.parse_env_descriptor(item)
@@ -2006,6 +2120,7 @@ impl Permissions {
       read: UnaryPermission::allow_all(),
       write: UnaryPermission::allow_all(),
       net: UnaryPermission::allow_all(),
+      net_listen: UnaryPermission::allow_all(),
       env: UnaryPermission::allow_all(),
       sys: UnaryPermission::allow_all(),
       run: UnaryPermission::allow_all(),
@@ -2030,6 +2145,7 @@ impl Permissions {
       read: Permissions::new_unary(None, None, prompt).unwrap(),
       write: Permissions::new_unary(None, None, prompt).unwrap(),
       net: Permissions::new_unary(None, None, prompt).unwrap(),
+      net_listen: Permissions::new_unary(None, None, prompt).unwrap(),
       env: Permissions::new_unary(None, None, prompt).unwrap(),
       sys: Permissions::new_unary(None, None, prompt).unwrap(),
       run: Permissions::new_unary(None, None, prompt).unwrap(),
@@ -2102,6 +2218,7 @@ impl PermissionsContainer {
         &child_permissions_arg.read,
         &child_permissions_arg.write,
         &child_permissions_arg.net,
+        &child_permissions_arg.net_listen,
         &child_permissions_arg.import,
         &child_permissions_arg.env,
         &child_permissions_arg.sys,
@@ -2135,6 +2252,11 @@ impl PermissionsContainer {
       .net
       .create_child_permissions(child_permissions_arg.net, |text| {
         Ok(Some(self.descriptor_parser.parse_net_descriptor(text)?))
+      })?;
+    worker_perms.net_listen = inner
+      .net_listen
+      .create_child_permissions(child_permissions_arg.net_listen, |text| {
+        Ok(Some(self.descriptor_parser.parse_net_listen_descriptor(text)?))
       })?;
     worker_perms.env = inner
       .env
@@ -2571,6 +2693,34 @@ impl PermissionsContainer {
   }
 
   #[inline(always)]
+  pub fn check_net_listen_url(
+    &mut self,
+    url: &Url,
+    api_name: &str,
+  ) -> Result<(), AnyError> {
+    let mut inner = self.inner.lock();
+    if inner.net_listen.is_allow_all() {
+      return Ok(());
+    }
+    let desc = self.descriptor_parser.parse_net_descriptor_from_url(url)?;
+    inner.net.check(&desc, Some(api_name))
+  }
+
+  #[inline(always)]
+  pub fn check_net_listen<T: AsRef<str>>(
+    &mut self,
+    host: &(T, Option<u16>),
+    api_name: &str,
+  ) -> Result<(), AnyError> {
+    let mut inner = self.inner.lock();
+    let inner = &mut inner.net_listen;
+    skip_check_if_is_permission_fully_granted!(inner);
+    let hostname = Host::parse(host.0.as_ref())?;
+    let descriptor = NetListenDescriptor(NetDescriptor(hostname, host.1));
+    inner.check(&descriptor, Some(api_name))
+  }
+
+  #[inline(always)]
   pub fn check_ffi(&mut self, path: &str) -> Result<PathBuf, AnyError> {
     let mut inner = self.inner.lock();
     let inner = &mut inner.ffi;
@@ -2677,6 +2827,27 @@ impl PermissionsContainer {
         match host {
           None => None,
           Some(h) => Some(self.descriptor_parser.parse_net_descriptor(h)?),
+        }
+        .as_ref(),
+      ),
+    )
+  }
+
+  #[inline(always)]
+  pub fn query_net_listen(
+    &self,
+    host: Option<&str>,
+  ) -> Result<PermissionState, AnyError> {
+    let inner = self.inner.lock();
+    let permission = &inner.net_listen;
+    if permission.is_allow_all() {
+      return Ok(PermissionState::Granted);
+    }
+    Ok(
+      permission.query(
+        match host {
+          None => None,
+          Some(h) => Some(self.descriptor_parser.parse_net_listen_descriptor(h)?),
         }
         .as_ref(),
       ),
@@ -2814,6 +2985,22 @@ impl PermissionsContainer {
   }
 
   #[inline(always)]
+  pub fn revoke_net_listen(
+    &self,
+    host: Option<&str>,
+  ) -> Result<PermissionState, AnyError> {
+    Ok(
+      self.inner.lock().net_listen.revoke(
+        match host {
+          None => None,
+          Some(h) => Some(self.descriptor_parser.parse_net_listen_descriptor(h)?),
+        }
+        .as_ref(),
+      ),
+    )
+  }
+
+  #[inline(always)]
   pub fn revoke_env(&self, var: Option<&str>) -> PermissionState {
     self.inner.lock().env.revoke(var)
   }
@@ -2917,6 +3104,22 @@ impl PermissionsContainer {
         match host {
           None => None,
           Some(h) => Some(self.descriptor_parser.parse_net_descriptor(h)?),
+        }
+        .as_ref(),
+      ),
+    )
+  }
+
+  #[inline(always)]
+  pub fn request_net_listen(
+    &self,
+    host: Option<&str>,
+  ) -> Result<PermissionState, AnyError> {
+    Ok(
+      self.inner.lock().net_listen.request(
+        match host {
+          None => None,
+          Some(h) => Some(self.descriptor_parser.parse_net_listen_descriptor(h)?),
         }
         .as_ref(),
       ),
@@ -3131,6 +3334,7 @@ impl<'de> Deserialize<'de> for ChildUnaryPermissionArg {
 pub struct ChildPermissionsArg {
   env: ChildUnaryPermissionArg,
   net: ChildUnaryPermissionArg,
+  net_listen: ChildUnaryPermissionArg,
   ffi: ChildUnaryPermissionArg,
   import: ChildUnaryPermissionArg,
   read: ChildUnaryPermissionArg,
@@ -3144,6 +3348,7 @@ impl ChildPermissionsArg {
     ChildPermissionsArg {
       env: ChildUnaryPermissionArg::Inherit,
       net: ChildUnaryPermissionArg::Inherit,
+      net_listen: ChildUnaryPermissionArg::Inherit,
       ffi: ChildUnaryPermissionArg::Inherit,
       import: ChildUnaryPermissionArg::Inherit,
       read: ChildUnaryPermissionArg::Inherit,
@@ -3157,6 +3362,7 @@ impl ChildPermissionsArg {
     ChildPermissionsArg {
       env: ChildUnaryPermissionArg::NotGranted,
       net: ChildUnaryPermissionArg::NotGranted,
+      net_listen: ChildUnaryPermissionArg::NotGranted,
       ffi: ChildUnaryPermissionArg::NotGranted,
       import: ChildUnaryPermissionArg::NotGranted,
       read: ChildUnaryPermissionArg::NotGranted,
@@ -3217,6 +3423,11 @@ impl<'de> Deserialize<'de> for ChildPermissionsArg {
             let arg = serde_json::from_value::<ChildUnaryPermissionArg>(value);
             child_permissions_arg.net = arg.map_err(|e| {
               de::Error::custom(format!("(deno.permissions.net) {e}"))
+            })?;
+          } else if key == "net-listen" {
+            let arg = serde_json::from_value::<ChildUnaryPermissionArg>(value);
+            child_permissions_arg.net_listen = arg.map_err(|e| {
+              de::Error::custom(format!("(deno.permissions.net-listen) {e}"))
             })?;
           } else if key == "ffi" {
             let arg = serde_json::from_value::<ChildUnaryPermissionArg>(value);
@@ -3282,6 +3493,18 @@ pub trait PermissionDescriptorParser: Debug + Send + Sync {
     url: &Url,
   ) -> Result<NetDescriptor, AnyError> {
     NetDescriptor::from_url(url)
+  }
+
+  fn parse_net_listen_descriptor(
+    &self,
+    text: &str,
+  ) -> Result<NetListenDescriptor, AnyError>;
+
+  fn parse_net_listen_descriptor_from_url(
+    &self,
+    url: &Url,
+  ) -> Result<NetListenDescriptor, AnyError> {
+    NetListenDescriptor::from_url(url)
   }
 
   fn parse_import_descriptor(
@@ -3384,6 +3607,13 @@ mod tests {
       text: &str,
     ) -> Result<NetDescriptor, AnyError> {
       NetDescriptor::parse(text)
+    }
+
+    fn parse_net_listen_descriptor(
+      &self,
+      text: &str,
+    ) -> Result<NetListenDescriptor, AnyError> {
+      NetListenDescriptor::parse(text)
     }
 
     fn parse_import_descriptor(
@@ -4399,6 +4629,7 @@ mod tests {
       ChildPermissionsArg {
         env: ChildUnaryPermissionArg::Inherit,
         net: ChildUnaryPermissionArg::Inherit,
+        net_listen: ChildUnaryPermissionArg::Inherit,
         ffi: ChildUnaryPermissionArg::Inherit,
         import: ChildUnaryPermissionArg::Inherit,
         read: ChildUnaryPermissionArg::Inherit,
@@ -4412,6 +4643,7 @@ mod tests {
       ChildPermissionsArg {
         env: ChildUnaryPermissionArg::NotGranted,
         net: ChildUnaryPermissionArg::NotGranted,
+        net_listen: ChildUnaryPermissionArg::NotGranted,
         ffi: ChildUnaryPermissionArg::NotGranted,
         import: ChildUnaryPermissionArg::NotGranted,
         read: ChildUnaryPermissionArg::NotGranted,
@@ -4446,6 +4678,7 @@ mod tests {
       serde_json::from_value::<ChildPermissionsArg>(json!({
         "env": true,
         "net": true,
+        "net-listen": true,
         "ffi": true,
         "import": true,
         "read": true,
@@ -4457,6 +4690,7 @@ mod tests {
       ChildPermissionsArg {
         env: ChildUnaryPermissionArg::Granted,
         net: ChildUnaryPermissionArg::Granted,
+        net_listen: ChildUnaryPermissionArg::Granted,
         ffi: ChildUnaryPermissionArg::Granted,
         import: ChildUnaryPermissionArg::Granted,
         read: ChildUnaryPermissionArg::Granted,
@@ -4469,6 +4703,7 @@ mod tests {
       serde_json::from_value::<ChildPermissionsArg>(json!({
         "env": false,
         "net": false,
+        "net-listen": false,
         "ffi": false,
         "import": false,
         "read": false,
@@ -4480,6 +4715,7 @@ mod tests {
       ChildPermissionsArg {
         env: ChildUnaryPermissionArg::NotGranted,
         net: ChildUnaryPermissionArg::NotGranted,
+        net_listen: ChildUnaryPermissionArg::NotGranted,
         ffi: ChildUnaryPermissionArg::NotGranted,
         import: ChildUnaryPermissionArg::NotGranted,
         read: ChildUnaryPermissionArg::NotGranted,
@@ -4492,6 +4728,7 @@ mod tests {
       serde_json::from_value::<ChildPermissionsArg>(json!({
         "env": ["foo", "bar"],
         "net": ["foo", "bar:8000"],
+        "net-listen": ["foo", "bar:8000"],
         "ffi": ["foo", "file:///bar/baz"],
         "import": ["example.com"],
         "read": ["foo", "file:///bar/baz"],
@@ -4503,6 +4740,7 @@ mod tests {
       ChildPermissionsArg {
         env: ChildUnaryPermissionArg::GrantedList(svec!["foo", "bar"]),
         net: ChildUnaryPermissionArg::GrantedList(svec!["foo", "bar:8000"]),
+        net_listen: ChildUnaryPermissionArg::GrantedList(svec!["foo", "bar:8000"]),
         ffi: ChildUnaryPermissionArg::GrantedList(svec![
           "foo",
           "file:///bar/baz"

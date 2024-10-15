@@ -18,7 +18,8 @@ use super::utils::into_string;
 use crate::worker::ExitCode;
 
 mod sys_info;
-pub(crate) mod in_memory;
+
+type Env = HashMap<String, String>;
 
 deno_core::extension!(
   deno_os,
@@ -43,9 +44,13 @@ deno_core::extension!(
   ],
   options = {
     exit_code: ExitCode,
+    env: Env,
+    exit_channel_tx: tokio::sync::watch::Sender<()>,
   },
   state = |state, options| {
     state.put::<ExitCode>(options.exit_code);
+    state.put::<Env>(options.env);
+    state.put::<tokio::sync::watch::Sender<()>>(options.exit_channel_tx);
   },
 );
 
@@ -110,15 +115,15 @@ fn op_set_env(
       "Value contains invalid characters: {value:?}"
     )));
   }
-  env::set_var(key, value);
+  state.borrow_mut::<Env>().insert(key.to_string(), value.to_string());
   Ok(())
 }
 
 #[op2]
 #[serde]
-fn op_env(state: &mut OpState) -> Result<HashMap<String, String>, AnyError> {
+fn op_env(state: &mut OpState) -> Result<Env, AnyError> {
   state.borrow_mut::<PermissionsContainer>().check_env_all()?;
-  Ok(env::vars().collect())
+  Ok(state.borrow::<Env>().clone())
 }
 
 #[op2]
@@ -143,11 +148,7 @@ fn op_get_env(
     )));
   }
 
-  let r = match env::var(key) {
-    Err(env::VarError::NotPresent) => None,
-    v => Some(v?),
-  };
-  Ok(r)
+  Ok(state.borrow::<Env>().get(&key).cloned())
 }
 
 #[op2(fast)]
@@ -159,7 +160,7 @@ fn op_delete_env(
   if key.is_empty() || key.contains(&['=', '\0'] as &[char]) {
     return Err(type_error("Key contains invalid characters."));
   }
-  env::remove_var(key);
+  state.borrow_mut::<Env>().remove(&key);
   Ok(())
 }
 
@@ -175,9 +176,15 @@ fn op_get_exit_code(state: &mut OpState) -> i32 {
 }
 
 #[op2(fast)]
-fn op_exit(state: &mut OpState) {
-  let code = state.borrow::<ExitCode>().get();
-  std::process::exit(code)
+fn op_exit(state: &mut OpState) -> Result<(), AnyError> {
+  if state.borrow::<tokio::sync::watch::Sender<()>>().send(()).is_err() {
+    return Err(generic_error("Failed to send exit signal."));
+  }
+
+  // Yield to the runtime
+  std::thread::yield_now();
+  // std::thread::sleep(std::time::Duration::from_secs(1));
+  Ok(())
 }
 
 #[op2]
