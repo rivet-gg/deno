@@ -22,7 +22,7 @@ use std::sync::Arc;
 struct Permissions;
 
 impl deno_websocket::WebSocketPermissions for Permissions {
-  fn check_net_url(
+  fn check_net_listen_url(
     &mut self,
     _url: &deno_core::url::Url,
     _api_name: &str,
@@ -125,6 +125,15 @@ impl deno_net::NetPermissions for Permissions {
   fn check_net<T: AsRef<str>>(
     &mut self,
     _host: &(T, Option<u16>),
+    _api_name: &str,
+  ) -> Result<(), PermissionCheckError> {
+    unreachable!("snapshotting!")
+  }
+
+  fn check_net_listen<T: AsRef<str>>(
+    &mut self,
+    _host: &(T, Option<u16>),
+    _protocol: deno_permissions::Protocol,
     _api_name: &str,
   ) -> Result<(), PermissionCheckError> {
     unreachable!("snapshotting!")
