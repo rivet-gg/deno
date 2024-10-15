@@ -1063,7 +1063,7 @@ impl QueryDescriptor for NetListenDescriptor {
   }
 
   fn display_name(&self) -> Cow<str> {
-    self.0.display_name()
+    Cow::from(format!("{}", self))
   }
 
   fn from_allow(allow: &Self::AllowDesc) -> Self {
@@ -1127,6 +1127,17 @@ impl NetListenDescriptor {
 
   pub fn from_ipv4(ip: Ipv4Addr, port: Option<u16>, protocol: Protocol) -> Self {
     NetListenDescriptor(NetDescriptor(Host::Ip(IpAddr::V4(ip)), port), protocol)
+  }
+}
+
+impl fmt::Display for NetListenDescriptor {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match &self.1 {
+      Protocol::Tcp => write!(f, "tcp://")?,
+      Protocol::Udp => write!(f, "udp://")?,
+    }
+    
+    write!(f, "{}", self.0.display_name())
   }
 }
 
