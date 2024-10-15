@@ -27,6 +27,7 @@ use std::fmt;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::net::IpAddr;
+use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
 use std::path::Path;
 use std::path::PathBuf;
@@ -1044,8 +1045,8 @@ impl NetListenDescriptor {
     Ok(NetListenDescriptor(NetDescriptor::from_url(url)?))
   }
 
-  pub fn from_ipv4(ip: Ipv4, port: Option<u16>) -> Self {
-    Ok(NetListenDescriptor(NetDescriptor(Host::Ip(IpAddr::V4(ip)), port)))
+  pub fn from_ipv4(ip: Ipv4Addr, port: Option<u16>) -> Self {
+    NetListenDescriptor(NetDescriptor(Host::Ip(IpAddr::V4(ip)), port))
   }
 }
 
