@@ -314,7 +314,11 @@ pub fn create_runtime_snapshot(
       None,
     ),
     ops::fs_events::deno_fs_events::init_ops(),
-    ops::os::deno_os::init_ops(Default::default()),
+    ops::os::deno_os::init_ops(
+      Default::default(),
+      Default::default(),
+      tokio::sync::watch::channel(()).0
+    ),
     ops::permissions::deno_permissions::init_ops(),
     ops::process::deno_process::init_ops(None),
     ops::signal::deno_signal::init_ops(),

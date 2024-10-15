@@ -408,7 +408,7 @@ impl MainWorker {
         options.format_js_error_fn.clone(),
       ),
       ops::fs_events::deno_fs_events::init_ops_and_esm(),
-      ops::os::in_memory::deno_os::init_ops_and_esm(
+      ops::os::deno_os::init_ops_and_esm(
         unsafe { std::mem::transmute(exit_code.clone()) },
         options.env.clone(),
         exit_channel_tx,

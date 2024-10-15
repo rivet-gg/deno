@@ -40,9 +40,13 @@ deno_core::extension!(
   ],
   options = {
     exit_code: ExitCode,
+    env: Env,
+    exit_channel_tx: tokio::sync::watch::Sender<()>,
   },
   state = |state, options| {
     state.put::<ExitCode>(options.exit_code);
+    state.put::<Env>(options.env);
+    state.put::<tokio::sync::watch::Sender<()>>(options.exit_channel_tx);
   },
 );
 

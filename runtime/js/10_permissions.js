@@ -37,11 +37,12 @@ const illegalConstructorKey = Symbol("illegalConstructorKey");
  * @property {boolean} partial
  */
 
-/** @type {ReadonlyArray<"read" | "write" | "net" | "env" | "sys" | "run" | "ffi">} */
+/** @type {ReadonlyArray<"read" | "write" | "net" | "net-listen" | "env" | "sys" | "run" | "ffi">} */
 const permissionNames = [
   "read",
   "write",
   "net",
+  "net-listen",
   "env",
   "sys",
   "run",
@@ -137,6 +138,8 @@ function cache(desc, rawStatus) {
   ) {
     key += `-${desc.path}&`;
   } else if (desc.name === "net" && desc.host) {
+    key += `-${desc.host}&`;
+  } else if (desc.name === "net-listen" && desc.host) {
     key += `-${desc.host}&`;
   } else if (desc.name === "run" && desc.command) {
     key += `-${desc.command}&`;
@@ -287,7 +290,7 @@ function serializePermissions(permissions) {
       }
     }
     for (
-      const key of new SafeArrayIterator(["env", "net", "sys"])
+      const key of new SafeArrayIterator(["env", "net", "net-listen", "sys"])
     ) {
       if (ArrayIsArray(permissions[key])) {
         serializedPermissions[key] = ArrayPrototypeSlice(permissions[key]);
