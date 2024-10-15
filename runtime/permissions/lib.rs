@@ -21,6 +21,7 @@ use std::fmt;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::net::IpAddr;
+use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
 use std::path::Path;
 use std::path::PathBuf;
@@ -1104,11 +1105,11 @@ impl NetListenDescriptor {
     Ok(NetListenDescriptor(NetDescriptor::parse(specifier)?))
   }
 
-  pub fn from_url(url: &Url) -> Result<Self, NetDescriptorParseError> {
+  pub fn from_url(url: &Url) -> Result<Self, NetDescriptorFromUrlParseError> {
     Ok(NetListenDescriptor(NetDescriptor::from_url(url)?))
   }
 
-  pub fn from_ipv4(ip: Ipv4, port: Option<u16>) -> Self {
+  pub fn from_ipv4(ip: Ipv4Addr, port: Option<u16>) -> Self {
     NetListenDescriptor(NetDescriptor(Host::Ip(IpAddr::V4(ip)), port))
   }
 }
@@ -3035,7 +3036,8 @@ impl PermissionsContainer {
     skip_check_if_is_permission_fully_granted!(inner);
     let hostname = Host::parse(host.0.as_ref())?;
     let descriptor = NetListenDescriptor(NetDescriptor(hostname, host.1));
-    inner.check(&descriptor, Some(api_name))
+    inner.check(&descriptor, Some(api_name))?;
+    Ok(())
   }
 
   #[inline(always)]
@@ -3049,7 +3051,8 @@ impl PermissionsContainer {
       return Ok(());
     }
     let desc = self.descriptor_parser.parse_net_descriptor_from_url(url)?;
-    inner.net.check(&desc, Some(api_name))
+    inner.net.check(&desc, Some(api_name))?;
+    Ok(())
   }
 
   #[inline(always)]
@@ -3173,7 +3176,7 @@ impl PermissionsContainer {
   pub fn query_net_listen(
     &self,
     host: Option<&str>,
-  ) -> Result<PermissionState, PermissionCheckError> {
+  ) -> Result<PermissionState, NetDescriptorParseError> {
     let inner = self.inner.lock();
     let permission = &inner.net_listen;
     if permission.is_allow_all() {
@@ -3837,7 +3840,7 @@ pub trait PermissionDescriptorParser: Debug + Send + Sync {
   fn parse_net_listen_descriptor_from_url(
     &self,
     url: &Url,
-  ) -> Result<NetListenDescriptor, NetDescriptorParseError> {
+  ) -> Result<NetListenDescriptor, NetDescriptorFromUrlParseError> {
     NetListenDescriptor::from_url(url)
   }
 

@@ -1,13 +1,10 @@
 // Copyright 2018-2024 the Deno authors. All rights reserved. MIT license.
-// Modified to use a given hashmap for the env instead of the actual env.
 
 use crate::sys_info;
 use crate::worker::ExitCode;
-use deno_core::error::{type_error, generic_error};
-use deno_core::error::AnyError;
 use deno_core::op2;
-use deno_core::OpState;
 use deno_core::v8;
+use deno_core::OpState;
 use deno_node::NODE_ENV_VAR_ALLOWLIST;
 use deno_path_util::normalize_path;
 use deno_permissions::PermissionsContainer;
@@ -40,13 +37,9 @@ deno_core::extension!(
   ],
   options = {
     exit_code: ExitCode,
-    env: Env,
-    exit_channel_tx: tokio::sync::watch::Sender<()>,
   },
   state = |state, options| {
     state.put::<ExitCode>(options.exit_code);
-    state.put::<Env>(options.env);
-    state.put::<tokio::sync::watch::Sender<()>>(options.exit_channel_tx);
   },
 );
 

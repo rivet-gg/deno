@@ -79,7 +79,7 @@ impl deno_permissions::PermissionDescriptorParser
   fn parse_net_listen_descriptor(
     &self,
     text: &str,
-  ) -> Result<NetListenDescriptor, AnyError> {
+  ) -> Result<NetListenDescriptor, deno_permissions::NetDescriptorParseError> {
     NetListenDescriptor::parse(text)
   }
 

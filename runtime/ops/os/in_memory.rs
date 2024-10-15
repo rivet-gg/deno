@@ -1,3 +1,5 @@
+// Modified to use a given hashmap for the env instead of the actual env.
+
 use std::collections::HashMap;
 
 use deno_core::{OpState, op2, error::{generic_error, type_error, AnyError}};
