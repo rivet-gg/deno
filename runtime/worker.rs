@@ -745,13 +745,37 @@ impl MainWorker {
       .await
   }
 
-  pub async fn run_event_loop_no_exit(&mut self) -> Option<Result<(), AnyError>> {
+  pub async fn run_event_loop_with_exit(&mut self) -> Option<Result<(), AnyError>> {
     let rx = self.exit_channel_rx.clone();
     let mut rx = rx.borrow_mut();
 
     tokio::select! {
       _ = rx.changed() => None,
       res = self.run_event_loop(false) => Some(res),
+    }
+  }
+
+  /// Executes specified JavaScript module.
+  pub async fn evaluate_module_with_exit(&mut self, id: ModuleId) -> Option<Result<(), AnyError>> {
+    self.wait_for_inspector_session();
+    let mut receiver = self.js_runtime.mod_evaluate(id);
+    tokio::select! {
+      // Not using biased mode leads to non-determinism for relatively simple
+      // programs.
+      biased;
+
+      maybe_result = &mut receiver => {
+        debug!("received module evaluate {:#?}", maybe_result);
+        Some(maybe_result)
+      }
+
+      event_loop_result = self.run_event_loop_with_exit() => {
+        match event_loop_result {
+          Some(Ok(_)) => {},
+          x => return x,
+        }
+        Some(receiver.await)
+      }
     }
   }
 
