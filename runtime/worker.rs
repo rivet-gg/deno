@@ -755,6 +755,10 @@ impl MainWorker {
     }
   }
 
+  pub fn terminate_execution(&mut self) -> bool {
+    self.js_runtime.v8_isolate().terminate_execution()
+  }
+
   /// Return exit code set by the executed code (either in main worker
   /// or one of child web workers).
   pub fn exit_code(&self) -> i32 {
