@@ -779,12 +779,6 @@ impl MainWorker {
     }
   }
 
-  /// Evaluates a module without running the event loop
-  pub async fn evaluate_module_without_event_loop(&mut self, id: ModuleId) -> Result<(), AnyError> {
-    self.wait_for_inspector_session();
-    self.js_runtime.mod_evaluate(id).await
-  }
-
   pub fn terminate_execution(&mut self) -> bool {
     self.js_runtime.v8_isolate().terminate_execution()
   }
