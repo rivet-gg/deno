@@ -4,7 +4,6 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::cell::RefCell;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicI32;
 use std::sync::atomic::Ordering::Relaxed;
@@ -129,7 +128,6 @@ pub struct MainWorker {
   dispatch_unload_event_fn_global: v8::Global<v8::Function>,
   // dispatch_process_beforeexit_event_fn_global: v8::Global<v8::Function>,
   // dispatch_process_exit_event_fn_global: v8::Global<v8::Function>,
-  exit_channel_rx: Rc<RefCell<tokio::sync::watch::Receiver<()>>>,
 }
 
 pub struct WorkerServiceOptions {
@@ -166,6 +164,8 @@ pub struct WorkerServiceOptions {
 
   /// V8 code cache for module and script source code.
   pub v8_code_cache: Option<Arc<dyn CodeCache>>,
+
+  pub stop_tx: tokio::sync::broadcast::Sender<()>,
 }
 
 pub struct WorkerOptions {
@@ -350,9 +350,6 @@ impl MainWorker {
       CreateCache(Arc::new(create_cache_fn))
     });
 
-    // Exit handling
-    let (exit_channel_tx, exit_channel_rx) = tokio::sync::watch::channel(());
-
     // NOTE(bartlomieju): ordering is important here, keep it in sync with
     // `runtime/web_worker.rs` and `runtime/snapshot.rs`!
     let mut extensions = vec![
@@ -411,7 +408,7 @@ impl MainWorker {
       ops::os::in_memory::deno_os::init_ops_and_esm(
         unsafe { std::mem::transmute(exit_code.clone()) },
         options.env.clone(),
-        exit_channel_tx,
+        services.stop_tx,
       ),
       ops::permissions::deno_permissions::init_ops_and_esm(),
       ops::process::deno_process::init_ops_and_esm(services.npm_process_state_provider),
@@ -603,7 +600,6 @@ impl MainWorker {
       dispatch_load_event_fn_global,
       dispatch_beforeunload_event_fn_global,
       dispatch_unload_event_fn_global,
-      exit_channel_rx: Rc::new(RefCell::new(exit_channel_rx)),
     };
     (worker, options.bootstrap)
   }
@@ -745,48 +741,18 @@ impl MainWorker {
       .await
   }
 
-  pub async fn run_event_loop_with_exit(&mut self) -> Option<Result<(), AnyError>> {
-    let rx = self.exit_channel_rx.clone();
-    let mut rx = rx.borrow_mut();
-
-    tokio::select! {
-      _ = rx.changed() => None,
-      res = self.run_event_loop(false) => Some(res),
-    }
-  }
-
-  /// Executes specified JavaScript module.
-  pub async fn evaluate_module_with_exit(&mut self, id: ModuleId) -> Option<Result<(), AnyError>> {
-    self.wait_for_inspector_session();
-    let mut receiver = self.js_runtime.mod_evaluate(id);
-    tokio::select! {
-      // Not using biased mode leads to non-determinism for relatively simple
-      // programs.
-      biased;
-
-      maybe_result = &mut receiver => {
-        debug!("received module evaluate {:#?}", maybe_result);
-        Some(maybe_result)
-      }
-
-      event_loop_result = self.run_event_loop_with_exit() => {
-        match event_loop_result {
-          Some(Ok(_)) => {},
-          x => return x,
-        }
-        Some(receiver.await)
-      }
-    }
-  }
-
-  pub fn terminate_execution(&mut self) -> bool {
-    self.js_runtime.v8_isolate().terminate_execution()
+  pub fn v8_isolate(&mut self) -> &mut v8::OwnedIsolate {
+    self.js_runtime.v8_isolate()
   }
 
   /// Return exit code set by the executed code (either in main worker
   /// or one of child web workers).
   pub fn exit_code(&self) -> i32 {
     self.exit_code.get()
+  }
+
+  pub fn set_exit_code(&mut self, exit_code: i32) {
+    self.exit_code.set(exit_code)
   }
 
   /// Dispatches "load" event to the JavaScript runtime.

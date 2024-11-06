@@ -326,7 +326,7 @@ pub fn create_runtime_snapshot(
     ops::os::in_memory::deno_os::init_ops(
       Default::default(),
       Default::default(),
-      tokio::sync::watch::channel(()).0
+      tokio::sync::broadcast::channel::<()>(1).0
     ),
     ops::permissions::deno_permissions::init_ops(),
     ops::process::deno_process::init_ops(None),
