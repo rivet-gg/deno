@@ -131,6 +131,10 @@ impl MainWorkerTerminateHandle {
     }
   }
 
+  pub fn is_terminated(&self) -> bool {
+    self.has_terminated.load(Ordering::SeqCst)
+  }
+
   pub fn terminate(&self) {
     self.terminate_waker.wake();
 
@@ -707,6 +711,9 @@ impl MainWorker {
       }
 
       event_loop_result = self.run_event_loop(Default::default()) => {
+        if self.terminate_handle.is_terminated() {
+          return Ok(());
+        }
         event_loop_result?;
         receiver.await
       }
@@ -771,26 +778,13 @@ impl MainWorker {
     )
   }
 
-  // pub async fn run_event_loop(
-  //   &mut self,
-  //   wait_for_inspector: bool,
-  // ) -> Result<(), AnyError> {
-  //   self
-  //     .js_runtime
-  //     .run_event_loop(deno_core::PollEventLoopOptions {
-  //       wait_for_inspector,
-  //       ..Default::default()
-  //     })
-  //     .await
-  // }
-
   fn poll_event_loop(
     &mut self,
     cx: &mut Context,
     poll_options: PollEventLoopOptions,
   ) -> Poll<Result<(), AnyError>> {
     // If awakened because we are terminating, just return Ok
-    if self.is_terminated() {
+    if self.terminate_handle.is_terminated() {
       return Poll::Ready(Ok(()));
     }
 
@@ -799,13 +793,13 @@ impl MainWorker {
     match self.js_runtime.poll_event_loop(cx, poll_options) {
       Poll::Ready(r) => {
         // If js ended because we are terminating, just return Ok
-        if self.is_terminated() {
+        if self.terminate_handle.is_terminated() {
           return Poll::Ready(Ok(()));
         }
 
         return Poll::Ready(r);
       }
-      Poll::Pending => Poll::Pending
+      Poll::Pending => Poll::Pending,
     }
   }
 
@@ -832,7 +826,7 @@ impl MainWorker {
 
   /// Check if this worker is terminated or being terminated
   pub fn is_terminated(&self) -> bool {
-    self.terminate_handle.has_terminated.load(Ordering::SeqCst)
+    self.terminate_handle.is_terminated()
   }
 
   pub fn terminate_handle(&self) -> &MainWorkerTerminateHandle {
