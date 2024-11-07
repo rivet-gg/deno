@@ -3,11 +3,15 @@
 
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::future::poll_fn;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicI32;
+use std::sync::atomic::Ordering;
 use std::sync::atomic::Ordering::Relaxed;
-use std::sync::Arc;
+use std::task::Context;
+use std::task::Poll;
 use std::time::Duration;
 use std::time::Instant;
 
@@ -46,6 +50,7 @@ use deno_permissions::PermissionsContainer;
 use deno_tls::RootCertStoreProvider;
 use deno_tls::TlsKeys;
 use deno_web::BlobStore;
+use deno_core::futures::task::AtomicWaker;
 use log::debug;
 
 use crate::code_cache::CodeCache;
@@ -110,6 +115,37 @@ impl ExitCode {
   }
 }
 
+#[derive(Clone)]
+pub struct MainWorkerTerminateHandle {
+  has_terminated: Arc<AtomicBool>,
+  terminate_waker: Arc<AtomicWaker>,
+  isolate_handle: v8::IsolateHandle,
+}
+
+impl MainWorkerTerminateHandle {
+  fn new(isolate_handle: v8::IsolateHandle) -> Self {
+    MainWorkerTerminateHandle {
+      has_terminated: Arc::new(AtomicBool::new(false)),
+      terminate_waker: Arc::new(AtomicWaker::new()),
+      isolate_handle,    
+    }
+  }
+
+  pub fn terminate(&self) {
+    self.terminate_waker.wake();
+
+    // This function can be called multiple times by whomever holds
+    // the handle. However only a single "termination" should occur so
+    // we need a guard here.
+    let already_terminated = self.has_terminated.swap(true, Ordering::SeqCst);
+
+    if !already_terminated {
+      // Stop javascript execution
+      self.isolate_handle.terminate_execution();
+    }
+  }
+}
+
 /// This worker is created and used by almost all
 /// subcommands in Deno executable.
 ///
@@ -128,6 +164,7 @@ pub struct MainWorker {
   dispatch_unload_event_fn_global: v8::Global<v8::Function>,
   // dispatch_process_beforeexit_event_fn_global: v8::Global<v8::Function>,
   // dispatch_process_exit_event_fn_global: v8::Global<v8::Function>,
+  terminate_handle: MainWorkerTerminateHandle,
 }
 
 pub struct WorkerServiceOptions {
@@ -164,8 +201,6 @@ pub struct WorkerServiceOptions {
 
   /// V8 code cache for module and script source code.
   pub v8_code_cache: Option<Arc<dyn CodeCache>>,
-
-  pub stop_tx: tokio::sync::broadcast::Sender<()>,
 }
 
 pub struct WorkerOptions {
@@ -408,7 +443,6 @@ impl MainWorker {
       ops::os::in_memory::deno_os::init_ops_and_esm(
         unsafe { std::mem::transmute(exit_code.clone()) },
         options.env.clone(),
-        services.stop_tx,
       ),
       ops::permissions::deno_permissions::init_ops_and_esm(),
       ops::process::deno_process::init_ops_and_esm(services.npm_process_state_provider),
@@ -521,6 +555,13 @@ impl MainWorker {
       ..Default::default()
     });
 
+    let terminate_handle = MainWorkerTerminateHandle::new(js_runtime.v8_isolate().thread_safe_handle());
+
+    // Add terminate handle to op state
+    let op_state = js_runtime.op_state();
+    let mut op_state = op_state.borrow_mut();
+    op_state.put(terminate_handle.clone());
+
     if let Some(op_summary_metrics) = op_summary_metrics {
       js_runtime.op_state().borrow_mut().put(op_summary_metrics);
     }
@@ -600,6 +641,7 @@ impl MainWorker {
       dispatch_load_event_fn_global,
       dispatch_beforeunload_event_fn_global,
       dispatch_unload_event_fn_global,
+      terminate_handle,
     };
     (worker, options.bootstrap)
   }
@@ -654,18 +696,19 @@ impl MainWorker {
   pub async fn evaluate_module(&mut self, id: ModuleId) -> Result<(), AnyError> {
     self.wait_for_inspector_session();
     let mut receiver = self.js_runtime.mod_evaluate(id);
+    
     tokio::select! {
       // Not using biased mode leads to non-determinism for relatively simple
       // programs.
       biased;
 
       maybe_result = &mut receiver => {
-      maybe_result
+        maybe_result
       }
 
-      event_loop_result = self.run_event_loop(false) => {
-      event_loop_result?;
-      receiver.await
+      event_loop_result = self.run_event_loop(Default::default()) => {
+        event_loop_result?;
+        receiver.await
       }
     }
   }
@@ -728,17 +771,49 @@ impl MainWorker {
     )
   }
 
+  // pub async fn run_event_loop(
+  //   &mut self,
+  //   wait_for_inspector: bool,
+  // ) -> Result<(), AnyError> {
+  //   self
+  //     .js_runtime
+  //     .run_event_loop(deno_core::PollEventLoopOptions {
+  //       wait_for_inspector,
+  //       ..Default::default()
+  //     })
+  //     .await
+  // }
+
+  fn poll_event_loop(
+    &mut self,
+    cx: &mut Context,
+    poll_options: PollEventLoopOptions,
+  ) -> Poll<Result<(), AnyError>> {
+    // If awakened because we are terminating, just return Ok
+    if self.is_terminated() {
+      return Poll::Ready(Ok(()));
+    }
+
+    self.terminate_handle.terminate_waker.register(cx.waker());
+
+    match self.js_runtime.poll_event_loop(cx, poll_options) {
+      Poll::Ready(r) => {
+        // If js ended because we are terminating, just return Ok
+        if self.is_terminated() {
+          return Poll::Ready(Ok(()));
+        }
+
+        return Poll::Ready(r);
+      }
+      Poll::Pending => Poll::Pending
+    }
+  }
+
   pub async fn run_event_loop(
     &mut self,
-    wait_for_inspector: bool,
+    poll_options: PollEventLoopOptions,
   ) -> Result<(), AnyError> {
-    self
-      .js_runtime
-      .run_event_loop(deno_core::PollEventLoopOptions {
-        wait_for_inspector,
-        ..Default::default()
-      })
-      .await
+    poll_fn(|cx| self.poll_event_loop(cx, poll_options)).await
   }
 
   pub fn v8_isolate(&mut self) -> &mut v8::OwnedIsolate {
@@ -753,6 +828,19 @@ impl MainWorker {
 
   pub fn set_exit_code(&mut self, exit_code: i32) {
     self.exit_code.set(exit_code)
+  }
+
+  /// Check if this worker is terminated or being terminated
+  pub fn is_terminated(&self) -> bool {
+    self.terminate_handle.has_terminated.load(Ordering::SeqCst)
+  }
+
+  pub fn terminate_handle(&self) -> &MainWorkerTerminateHandle {
+    &self.terminate_handle
+  }
+
+  pub fn terminate(&mut self) {
+    self.terminate_handle.terminate();
   }
 
   /// Dispatches "load" event to the JavaScript runtime.

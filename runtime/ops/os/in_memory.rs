@@ -21,7 +21,7 @@ use super::{
   op_uid,
   op_runtime_memory_usage,
 };
-use crate::worker::ExitCode;
+use crate::worker::{ExitCode, MainWorkerTerminateHandle};
 
 type Env = HashMap<String, String>;
 
@@ -49,12 +49,10 @@ deno_core::extension!(
   options = {
     exit_code: ExitCode,
     env: Env,
-    exit_channel_tx: tokio::sync::watch::Sender<()>,
   },
   state = |state, options| {
     state.put::<ExitCode>(options.exit_code);
     state.put::<Env>(options.env);
-    state.put::<tokio::sync::watch::Sender<()>>(options.exit_channel_tx);
   },
 );
 
@@ -124,9 +122,7 @@ fn op_delete_env(
 }
 
 #[op2(fast, stack_trace)]
-fn op_exit(state: &mut OpState) -> Result<(), AnyError> {
-  if state.borrow::<tokio::sync::watch::Sender<()>>().send(()).is_err() {
-    return Err(generic_error("Failed to send exit signal."));
-  }
-  Ok(())
+fn op_exit(state: &mut OpState) {
+  // Put into state by `MainWorker`
+  state.borrow::<MainWorkerTerminateHandle>().terminate();
 }
