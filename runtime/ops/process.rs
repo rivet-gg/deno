@@ -355,6 +355,9 @@ fn create_command(
     state,
     api_name,
   )?;
+
+  // Shouldn't be able to reach this due to Deno permissions, just a safety precaution
+  panic!("cannot spawn commands on Rivet");
   let mut command = std::process::Command::new(cmd);
 
   #[cfg(windows)]
@@ -634,7 +637,7 @@ fn compute_run_cmd_and_check_permissions(
   api_name: &str,
 ) -> Result<(PathBuf, RunEnv), ProcessError> {
   let run_env =
-    compute_run_env(arg_cwd, arg_envs, arg_clear_env).map_err(|e| {
+    compute_run_env(state, arg_cwd, arg_envs, arg_clear_env).map_err(|e| {
       ProcessError::SpawnFailed {
         command: arg_cmd.to_string(),
         error: Box::new(e),
@@ -668,13 +671,16 @@ struct RunEnv {
 /// the same environment used to spawn the sub command. This protects against
 /// someone doing timing attacks by changing the environment on a worker.
 fn compute_run_env(
+  state: &mut OpState,
   arg_cwd: Option<&str>,
   arg_envs: &[(String, String)],
   arg_clear_env: bool,
 ) -> Result<RunEnv, ProcessError> {
-  #[allow(clippy::disallowed_methods)]
-  let cwd =
-    std::env::current_dir().map_err(ProcessError::FailedResolvingCwd)?;
+  // #[allow(clippy::disallowed_methods)]
+  // let cwd =
+  //   std::env::current_dir().map_err(ProcessError::FailedResolvingCwd)?;
+  // Rivet runtime uses root dir (in-memory fs)
+  let cwd = Path::new("/").to_path_buf();
   let cwd = arg_cwd
     .map(|cwd_arg| resolve_path(cwd_arg, &cwd))
     .unwrap_or(cwd);
@@ -684,15 +690,16 @@ fn compute_run_env(
       .map(|(k, v)| (OsString::from(k), OsString::from(v)))
       .collect()
   } else {
-    let mut envs = std::env::vars_os()
+    let mut envs = state.borrow::<super::os::in_memory::Env>()
+      .iter()
       .map(|(k, v)| {
         (
           if cfg!(windows) {
-            k.to_ascii_uppercase()
+            OsString::from(k).to_ascii_uppercase()
           } else {
-            k
+            OsString::from( k.clone())
           },
-          v,
+          OsString::from(v.clone()),
         )
       })
       .collect::<HashMap<_, _>>();
@@ -943,6 +950,8 @@ mod deprecated {
       "Deno.run()",
     )?;
 
+    // Shouldn't be able to reach this due to Deno permissions, just a safety precaution
+    panic!("cannot spawn commands on Rivet");
     let mut c = Command::new(cmd);
     for arg in args.iter().skip(1) {
       c.arg(arg);

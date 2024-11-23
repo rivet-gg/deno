@@ -293,49 +293,139 @@ async function rename(oldpath, newpath) {
 //
 // 4. ?u64 converts a zero u64 value to JS null on Windows.
 //    ?bool converts a false bool value to JS null on Windows.
+// function createByteStruct(types) {
+//   // types can be "date", "bool" or "u64".
+//   let offset = 0;
+//   let str =
+//     'const unix = Deno.build.os === "darwin" || Deno.build.os === "linux" || Deno.build.os === "android" || Deno.build.os === "openbsd" || Deno.build.os === "freebsd"; return {';
+//   const typeEntries = ObjectEntries(types);
+//   for (let i = 0; i < typeEntries.length; ++i) {
+//     let { 0: name, 1: type } = typeEntries[i];
+
+//     const optional = StringPrototypeStartsWith(type, "?");
+//     if (optional) type = StringPrototypeSlice(type, 1);
+
+//     if (type == "u64") {
+//       if (!optional) {
+//         str += `${name}: view[${offset}] + view[${offset + 1}] * 2**32,`;
+//       } else {
+//         str += `${name}: (unix ? (view[${offset}] + view[${
+//           offset + 1
+//         }] * 2**32) : (view[${offset}] + view[${
+//           offset + 1
+//         }] * 2**32) || null),`;
+//       }
+//     } else if (type == "date") {
+//       str += `${name}: view[${offset}] === 0 ? null : new Date(view[${
+//         offset + 2
+//       }] + view[${offset + 3}] * 2**32),`;
+//       offset += 2;
+//     } else {
+//       if (!optional) {
+//         str += `${name}: !!(view[${offset}] + view[${offset + 1}] * 2**32),`;
+//       } else {
+//         str += `${name}: (unix ? !!((view[${offset}] + view[${
+//           offset + 1
+//         }] * 2**32)) : !!((view[${offset}] + view[${
+//           offset + 1
+//         }] * 2**32)) || null),`;
+//       }
+//     }
+//     offset += 2;
+//   }
+//   str += "};";
+//   // ...so you don't like eval huh? don't worry, it only executes during snapshot :)
+//   return [new Function("view", str), new Uint32Array(offset)];
+// }
+
+// Above function but rewritten to not use `new Function`
 function createByteStruct(types) {
-  // types can be "date", "bool" or "u64".
   let offset = 0;
-  let str =
-    'const unix = Deno.build.os === "darwin" || Deno.build.os === "linux" || Deno.build.os === "android" || Deno.build.os === "openbsd" || Deno.build.os === "freebsd"; return {';
-  const typeEntries = ObjectEntries(types);
+  const fieldFuncs = [];
+  const fieldNames = [];
+  const typeEntries = Object.entries(types);
+
   for (let i = 0; i < typeEntries.length; ++i) {
-    let { 0: name, 1: type } = typeEntries[i];
+    let [name, type] = typeEntries[i];
 
-    const optional = StringPrototypeStartsWith(type, "?");
-    if (optional) type = StringPrototypeSlice(type, 1);
+    const optional = type.startsWith("?");
+    if (optional) type = type.slice(1);
 
-    if (type == "u64") {
-      if (!optional) {
-        str += `${name}: view[${offset}] + view[${offset + 1}] * 2**32,`;
-      } else {
-        str += `${name}: (unix ? (view[${offset}] + view[${
-          offset + 1
-        }] * 2**32) : (view[${offset}] + view[${
-          offset + 1
-        }] * 2**32) || null),`;
-      }
-    } else if (type == "date") {
-      str += `${name}: view[${offset}] === 0 ? null : new Date(view[${
-        offset + 2
-      }] + view[${offset + 3}] * 2**32),`;
+    let func;
+    let currOffset = offset;
+
+    if (type === "date") {
+      // date: [1/0, extra padding, high u32, low u32]
+      func = (view) => {
+        if (view[currOffset] === 1) {
+          const high = view[currOffset + 2];
+          const low = view[currOffset + 3];
+          const value = high * 2 ** 32 + low;
+          return new Date(value);
+        } else {
+          return null;
+        }
+      };
+      offset += 4;
+    } else if (type === "bool") {
+      // bool: [1/0, extra padding]
+      func = (view) => {
+        const rawValue = view[currOffset];
+        const value = rawValue === 1;
+        if (!optional) {
+          return value;
+        } else {
+          if (Deno.build.os === "darwin" ||
+            Deno.build.os === "linux" ||
+            Deno.build.os === "android" ||
+            Deno.build.os === "openbsd" ||
+            Deno.build.os === "freebsd") {
+            return value;
+          } else {
+            return value ? true : null;
+          }
+        }
+      };
+      offset += 2;
+    } else if (type === "u64") {
+      // u64: [high u32, low u32]
+      func = (view) => {
+        const high = view[currOffset];
+        const low = view[currOffset + 1];
+        const value = high * 2 ** 32 + low;
+        if (!optional) {
+          return value;
+        } else {
+          if (Deno.build.os === "darwin" ||
+            Deno.build.os === "linux" ||
+            Deno.build.os === "android" ||
+            Deno.build.os === "openbsd" ||
+            Deno.build.os === "freebsd") {
+            return value;
+          } else {
+            return value === 0 ? null : value;
+          }
+        }
+      };
       offset += 2;
     } else {
-      if (!optional) {
-        str += `${name}: !!(view[${offset}] + view[${offset + 1}] * 2**32),`;
-      } else {
-        str += `${name}: (unix ? !!((view[${offset}] + view[${
-          offset + 1
-        }] * 2**32)) : !!((view[${offset}] + view[${
-          offset + 1
-        }] * 2**32)) || null),`;
-      }
+      throw new Error(`Unknown type: ${type}`);
     }
-    offset += 2;
+
+    fieldFuncs.push(func);
+    fieldNames.push(name);
   }
-  str += "};";
-  // ...so you don't like eval huh? don't worry, it only executes during snapshot :)
-  return [new Function("view", str), new Uint32Array(offset)];
+
+  const totalOffset = offset;
+  const structFunc = (view) => {
+    const obj = {};
+    for (let i = 0; i < fieldFuncs.length; ++i) {
+      obj[fieldNames[i]] = fieldFuncs[i](view);
+    }
+    return obj;
+  };
+
+  return [structFunc, new Uint32Array(totalOffset)];
 }
 
 const { 0: statStruct, 1: statBuf } = createByteStruct({

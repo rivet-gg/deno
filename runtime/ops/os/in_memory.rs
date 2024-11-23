@@ -23,7 +23,34 @@ use super::{
 };
 use crate::worker::{ExitCode, MainWorkerTerminateHandle};
 
-type Env = HashMap<String, String>;
+#[derive(Default)]
+pub struct Env(HashMap<String, String>);
+
+impl Env {
+  pub fn new(map: HashMap<String, String>) -> Self {
+    Env(map)
+  }
+}
+
+impl std::ops::Deref for Env {
+  type Target = HashMap<String, String>;
+
+  fn deref(&self) -> &Self::Target {
+    &self.0
+  }
+}
+
+impl std::ops::DerefMut for Env {
+  fn deref_mut(&mut self) -> &mut Self::Target {
+    &mut self.0
+  }
+}
+
+impl From<HashMap<String, String>> for Env {
+  fn from(map: HashMap<String, String>) -> Self {
+    Env::new(map)
+  }
+}
 
 deno_core::extension!(
   deno_os,
@@ -80,7 +107,7 @@ fn op_set_env(
 #[serde]
 fn op_env(state: &mut OpState) -> Result<HashMap<String, String>, AnyError> {
   state.borrow_mut::<PermissionsContainer>().check_env_all()?;
-  Ok(state.borrow::<Env>().clone())
+  Ok((&**state.borrow::<Env>()).clone())
 }
 
 #[op2(stack_trace)]

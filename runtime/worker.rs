@@ -349,21 +349,32 @@ pub fn create_op_metrics(
 }
 
 impl MainWorker {
+  /// Panics on error.
   pub fn bootstrap_from_options(
     main_module: ModuleSpecifier,
     services: WorkerServiceOptions,
     options: WorkerOptions,
   ) -> Self {
-    let (mut worker, bootstrap_options) = Self::from_options(main_module, services, options);
+    let (mut worker, bootstrap_options) = Self::from_options(main_module, services, options).unwrap();
     worker.bootstrap(bootstrap_options);
     worker
+  }
+
+  pub fn try_bootstrap_from_options(
+    main_module: ModuleSpecifier,
+    services: WorkerServiceOptions,
+    options: WorkerOptions,
+  ) -> Result<Self, AnyError> {
+    let (mut worker, bootstrap_options) = Self::from_options(main_module, services, options)?;
+    worker.bootstrap(bootstrap_options);
+    Ok(worker)
   }
 
   fn from_options(
     main_module: ModuleSpecifier,
     services: WorkerServiceOptions,
     mut options: WorkerOptions,
-  ) -> (Self, BootstrapOptions) {
+  ) -> Result<(Self, BootstrapOptions), AnyError> {
     deno_core::extension!(deno_permissions_worker,
       options = {
       permissions: PermissionsContainer,
@@ -446,7 +457,7 @@ impl MainWorker {
       ops::fs_events::deno_fs_events::init_ops_and_esm(),
       ops::os::in_memory::deno_os::init_ops_and_esm(
         unsafe { std::mem::transmute(exit_code.clone()) },
-        options.env.clone(),
+        ops::os::in_memory::Env::new(options.env.clone()),
       ),
       ops::permissions::deno_permissions::init_ops_and_esm(),
       ops::process::deno_process::init_ops_and_esm(services.npm_process_state_provider),
@@ -502,7 +513,7 @@ impl MainWorker {
       }
     });
 
-    let mut js_runtime = JsRuntime::new(RuntimeOptions {
+    let mut js_runtime = JsRuntime::try_new(RuntimeOptions {
       module_loader: Some(services.module_loader.clone()),
       startup_snapshot: options.startup_snapshot,
       create_params: options.create_params,
@@ -557,7 +568,7 @@ impl MainWorker {
         }))
       } else { None },
       ..Default::default()
-    });
+    })?;
 
     let terminate_handle = MainWorkerTerminateHandle::new(js_runtime.v8_isolate().thread_safe_handle());
 
@@ -647,7 +658,8 @@ impl MainWorker {
       dispatch_unload_event_fn_global,
       terminate_handle,
     };
-    (worker, options.bootstrap)
+    
+    Ok((worker, options.bootstrap))
   }
 
   pub fn bootstrap(&mut self, options: BootstrapOptions) {
