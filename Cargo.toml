@@ -48,7 +48,7 @@ repository = "https://github.com/denoland/deno"
 [workspace.dependencies]
 deno_ast = { version = "=0.44.0", features = ["transpiling"] }
 # deno_core = { path = "../deno_core/core" }
-deno_core = { git = "https://github.com/rivet-gg/deno_core", rev = "fbec9bde2d709fb029d2bc3028104d4e24d4e2a3" }
+deno_core = { git = "https://github.com/rivet-gg/deno_core", rev = "8a313913fa73d58f4f9532565b0084e723bc34ad" }
 
 deno_bench_util = { version = "0.174.0", path = "./bench_util" }
 deno_config = { version = "=0.39.3", features = ["workspace", "sync"] }
