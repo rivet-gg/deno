@@ -523,7 +523,7 @@ impl MainWorker {
       compiled_wasm_module_store: services.compiled_wasm_module_store.clone(),
       extensions,
       extension_transpiler: Some(Rc::new(maybe_transpile_source)),
-      inspector: options.maybe_inspector_server.is_some(),
+      inspector: true,
       is_main: true,
       feature_checker: Some(services.feature_checker.clone()),
       op_metrics_factory_fn,
@@ -573,19 +573,20 @@ impl MainWorker {
     let terminate_handle = MainWorkerTerminateHandle::new(js_runtime.v8_isolate().thread_safe_handle());
 
     // Add terminate handle to op state
-    let op_state = js_runtime.op_state();
-    let mut op_state = op_state.borrow_mut();
-    op_state.put(terminate_handle.clone());
+    {
+      js_runtime.op_state().borrow_mut().put(terminate_handle.clone());
+    }
 
     if let Some(op_summary_metrics) = op_summary_metrics {
       js_runtime.op_state().borrow_mut().put(op_summary_metrics);
     }
 
-    // Put inspector handle into the op state so we can put a breakpoint when
-    // executing a CJS entrypoint.
-    let op_state = js_runtime.op_state();
-    let inspector = js_runtime.inspector();
-    op_state.borrow_mut().put(inspector);
+    {
+      // Put inspector handle into the op state so we can put a breakpoint when
+      // executing a CJS entrypoint.
+      let inspector = js_runtime.inspector();
+      js_runtime.op_state().borrow_mut().put(inspector);
+    }
 
     if let Some(server) = options.maybe_inspector_server.clone() {
       server.register_inspector(
@@ -730,6 +731,11 @@ impl MainWorker {
         receiver.await
       }
     }
+  }
+
+  pub fn evaluate_module_sync(&mut self, id: ModuleId) -> Result<(), AnyError> {
+    self.wait_for_inspector_session();
+    self.js_runtime.mod_evaluate_sync(id)
   }
 
   /// Run the event loop up to a given duration. If the runtime resolves early, returns

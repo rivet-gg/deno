@@ -184,8 +184,8 @@ denoNsUnstableById[unstableIds.net] = {
 
 // denoNsUnstableById[unstableIds.workerOptions] = { __proto__: null }
 
-denoNsUnstableById[unstableIds.otel] = {
-  telemetry: telemetry.telemetry,
-};
+// denoNsUnstableById[unstableIds.otel] = {
+//   telemetry: telemetry.telemetry,
+// };
 
 export { denoNs, denoNsUnstableById, unstableIds };
