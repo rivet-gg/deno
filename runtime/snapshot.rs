@@ -22,7 +22,7 @@ use std::sync::Arc;
 struct Permissions;
 
 impl deno_websocket::WebSocketPermissions for Permissions {
-  fn check_net_listen_url(
+  fn check_net_url(
     &mut self,
     _url: &deno_core::url::Url,
     _api_name: &str,

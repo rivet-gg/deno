@@ -16,7 +16,6 @@ use deno_core::RcRef;
 use deno_core::Resource;
 use deno_core::ResourceId;
 use deno_core::ToJsBuffer;
-use deno_permissions::Protocol;
 use deno_net::raw::NetworkStream;
 use deno_tls::create_client_config;
 use deno_tls::rustls::ClientConfig;
@@ -110,7 +109,7 @@ impl WsRootStoreProvider {
 pub struct WsUserAgent(pub String);
 
 pub trait WebSocketPermissions {
-  fn check_net_listen_url(
+  fn check_net_url(
     &mut self,
     _url: &url::Url,
     _api_name: &str,
@@ -119,12 +118,12 @@ pub trait WebSocketPermissions {
 
 impl WebSocketPermissions for deno_permissions::PermissionsContainer {
   #[inline(always)]
-  fn check_net_listen_url(
+  fn check_net_url(
     &mut self,
     url: &url::Url,
     api_name: &str,
   ) -> Result<(), PermissionCheckError> {
-    deno_permissions::PermissionsContainer::check_net_listen_url(self, url, Protocol::Tcp, api_name)
+    deno_permissions::PermissionsContainer::check_net_url(self, url, api_name)
   }
 }
 
@@ -160,7 +159,7 @@ pub fn op_ws_check_permission_and_cancel_handle<WP>(
 where
   WP: WebSocketPermissions + 'static,
 {
-  state.borrow_mut::<WP>().check_net_listen_url(
+  state.borrow_mut::<WP>().check_net_url(
     &url::Url::parse(&url).map_err(WebsocketError::Url)?,
     &api_name,
   )?;
@@ -460,7 +459,7 @@ where
   {
     let mut s = state.borrow_mut();
     s.borrow_mut::<WP>()
-      .check_net_listen_url(
+      .check_net_url(
         &url::Url::parse(&url).map_err(WebsocketError::Url)?,
         &api_name,
       )
